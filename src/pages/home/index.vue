@@ -13,9 +13,9 @@
         <view class="hero__title">认真画一次妆</view>
         <view class="hero__desc">一对一，一客一消毒。</view>
         <view class="hero__desc hero__desc--last">约会、上镜、新娘，都可以慢慢聊。</view>
-        <AppButton @click="toBooking">预约化妆</AppButton>
+        <AppButton class="hero__btn" @click="toBooking">预约化妆</AppButton>
       </view>
-      <ArchImage class="hero__img" src="placeholder:g1" label="作品图" />
+      <ArchImage class="hero__img" src="placeholder:g1" />
     </view>
 
     <view class="trust">
@@ -33,7 +33,7 @@
     <template v-else-if="status === 'ok'">
       <view class="sec">
         <text class="sec__title">按场合选妆</text>
-        <text class="sec__link" @tap="toWorks()">全部作品</text>
+        <text class="sec__link" @tap="toWorks()">全部作品 ›</text>
       </view>
       <scroll-view scroll-x class="styles" :show-scrollbar="false" enhanced>
         <view
@@ -130,6 +130,10 @@ const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?i
 </script>
 
 <style lang="scss">
+page {
+  background: $milk-wash;
+}
+
 .brand {
   display: flex;
   align-items: baseline;
@@ -138,14 +142,15 @@ const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?i
 
   &__name {
     font-family: $font-serif;
-    font-weight: 700;
+    font-weight: $fw-display;
     font-size: $fs-title;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.12em;
     color: $mocha;
   }
 
   &__sub {
-    font-size: $fs-caption + 2rpx;
+    font-size: $fs-caption;
+    letter-spacing: 0.08em;
     color: $mute;
   }
 }
@@ -154,7 +159,7 @@ const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?i
   display: flex;
   align-items: flex-end;
   gap: 28rpx;
-  margin: 16rpx $page-x 0;
+  margin: 40rpx $page-x 0;
 
   &__text {
     flex: 1;
@@ -163,57 +168,69 @@ const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?i
 
   &__title {
     font-family: $font-serif;
-    font-weight: 600;
+    font-weight: $fw-display;
     font-size: $fs-title;
-    line-height: 1.45;
+    line-height: $lh-title;
+    letter-spacing: $ls-display;
   }
 
   &__title + &__desc {
-    margin-top: 20rpx;
+    margin-top: 24rpx;
   }
 
   &__desc {
     font-size: $fs-small;
-    line-height: 1.7;
+    line-height: $lh-body;
     color: $mute;
 
     &--last {
-      margin-bottom: 32rpx;
+      margin-bottom: 40rpx;
     }
+  }
+
+  & &__btn {
+    height: 80rpx;
+    padding: 0 52rpx;
+    letter-spacing: 0.12em;
   }
 
   &__img {
     flex: none;
-    width: 240rpx;
-    height: 336rpx;
-    margin: 16rpx 16rpx 16rpx 0;
-    box-shadow: 0 0 0 12rpx $card, 0 0 0 14rpx $hair;
+    width: 252rpx;
+    height: 352rpx;
+    box-shadow: $shadow-float;
   }
 }
 
+// 安全感信息：不铺底色，一行三项用细竖线隔开，只留绿色字
 .trust {
   display: flex;
-  gap: 12rpx;
-  margin: 44rpx $page-x 0;
-  padding: 28rpx 32rpx;
-  border-radius: 32rpx;
-  background: $sage-bg;
+  align-items: center;
+  margin: 56rpx $page-x 0;
+  padding: 28rpx 0;
+  border-top: 1rpx solid $hair;
+  border-bottom: 1rpx solid $hair;
 
   &__item {
     flex: 1;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    font-size: $fs-caption + 2rpx;
-    line-height: 1.5;
+    justify-content: center;
+    gap: 8rpx;
+    font-size: $fs-caption;
+    line-height: 1.4;
     color: $sage-ink;
-    text-align: center;
+    white-space: nowrap;
+
+    & + & {
+      border-left: 1rpx solid $hair;
+    }
   }
 
   &__icon {
-    width: 40rpx;
-    height: 40rpx;
-    margin-bottom: 8rpx;
+    flex: none;
+    width: 28rpx;
+    height: 28rpx;
   }
 }
 
@@ -221,12 +238,13 @@ const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?i
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin: 56rpx $page-x 24rpx;
+  margin: 72rpx $page-x 28rpx;
 
   &__title {
     font-family: $font-serif;
-    font-weight: 600;
+    font-weight: $fw-heading;
     font-size: $fs-h2;
+    letter-spacing: $ls-display;
   }
 
   &__link {
@@ -274,7 +292,7 @@ const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?i
   padding: $gap;
   border-radius: $r-card;
   background: $card;
-  box-shadow: $shadow-card;
+  box-shadow: $shadow-soft;
 
   &__thumb {
     flex: none;
@@ -296,6 +314,7 @@ const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?i
 
   &__meta {
     margin-bottom: 12rpx;
+    line-height: 1.5;
     font-size: $fs-caption + 2rpx;
     color: $mute;
   }
