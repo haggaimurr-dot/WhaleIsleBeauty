@@ -162,6 +162,7 @@ export const httpApi: Api = {
   listWorks: (category) => request('GET', '/works' + qs({ category })),
   listBookableDates: () => request('GET', '/dates'),
   getShop: () => request('GET', '/shop'),
+  listProducts: (category) => request('GET', '/products' + qs({ category })),
 
   listSlots: (artistId, date, serviceId, excludeBookingId) =>
     request('GET', '/slots' + qs({ artistId, date, serviceId, excludeBookingId })),
@@ -196,6 +197,9 @@ export const httpApi: Api = {
   createWork: (req) => request('POST', '/owner/works', req),
   updateWork: (id, req) => request('PUT', `/owner/works/${id}`, req),
   deleteWork: (id) => request('DELETE', `/owner/works/${id}`),
+  createProduct: (req) => request('POST', '/owner/products', req),
+  updateProduct: (id, req) => request('PUT', `/owner/products/${id}`, req),
+  deleteProduct: (id) => request('DELETE', `/owner/products/${id}`),
 }
 
 /**

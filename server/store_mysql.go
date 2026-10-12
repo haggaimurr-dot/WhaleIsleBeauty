@@ -408,23 +408,51 @@ func (s *mysqlStore) TakeOwnerNotifyQuota(ctx context.Context, openid string) (b
 
 // ---------- 基础资料 ----------
 
-// seedCatalog 表是空的时候写入初始数据。多个实例同时启动也没关系：主键冲突的被 IGNORE 掉
+// seedCatalog 表是空的时候写入初始数据；后来加的资料种类在老库里补一次。多个实例同时启动也没关系：主键冲突的被 IGNORE 掉
 func seedCatalog(db *sql.DB) error {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM catalog`).Scan(&n); err != nil {
 		return err
 	}
-	if n > 0 {
-		return nil
-	}
 	now := time.Now().UTC()
-	for _, it := range seedCatalogItems() {
+	insert := func(it CatalogItem) error {
 		if _, err := db.Exec(`INSERT IGNORE INTO catalog (kind, id, sort, data, updated_at) VALUES (?, ?, ?, ?, ?)`,
 			it.Kind, it.ID, it.Sort, it.Data, now); err != nil {
 			return fmt.Errorf("seed catalog: %w", err)
 		}
+		return nil
 	}
-	log.Print("catalog seeded")
+	if n == 0 {
+		for _, it := range seedCatalogItems() {
+			if err := insert(it); err != nil {
+				return err
+			}
+		}
+		log.Print("catalog seeded")
+	}
+	// 后来加的种类：补过一次就记在 schema_migrations 里（新库上面已经写过，INSERT IGNORE 掉）
+	for _, kind := range lateSeedKinds {
+		version := "seed:" + kind
+		var done int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&done); err != nil {
+			return err
+		}
+		if done > 0 {
+			continue
+		}
+		for _, it := range seedCatalogItems() {
+			if it.Kind != kind {
+				continue
+			}
+			if err := insert(it); err != nil {
+				return err
+			}
+		}
+		if _, err := db.Exec(`INSERT IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`, version, now); err != nil {
+			return err
+		}
+		log.Printf("catalog seeded: %s", kind)
+	}
 	return nil
 }
 

@@ -1,6 +1,6 @@
 import type {
   Artist, ArtistInput, Booking, CreateBookingReq, CreateBookingResp, DateStr, DaySchedule,
-  ID, Me, MonthStats, OwnerNotifyStatus, RescheduleReq, Service, ServiceInput, Shop, SkinProfile, SlotView, StyleCategory, TimeStr,
+  ID, Me, MonthStats, OwnerNotifyStatus, Product, ProductCategory, ProductInput, RescheduleReq, Service, ServiceInput, Shop, SkinProfile, SlotView, StyleCategory, TimeStr,
   UpdateSkinProfileReq, Work, WorkInput,
 } from './types'
 
@@ -50,6 +50,11 @@ export interface Api {
   listBookableDates(): Promise<DateStr[]>
   /** GET /shop  门店信息 */
   getShop(): Promise<Shop>
+  /**
+   * GET /products?category=  店里用的化妆品。按类别排（PRODUCT_CATEGORY_LABEL 的顺序），
+   * 同一类里先加的在前。店主维护也用这个接口
+   */
+  listProducts(category?: ProductCategory): Promise<Product[]>
 
   // ---------- 预约（客人端） ----------
   /**
@@ -185,4 +190,11 @@ export interface Api {
   updateWork(id: ID, req: WorkInput): Promise<Work>
   /** DELETE /owner/works/:id */
   deleteWork(id: ID): Promise<void>
+
+  /** POST /owner/products  排在同类的最后 */
+  createProduct(req: ProductInput): Promise<Product>
+  /** PUT /owner/products/:id  顺序不变（换了类别就按原来加的先后排进新类别） */
+  updateProduct(id: ID, req: ProductInput): Promise<Product>
+  /** DELETE /owner/products/:id  可以删光，客人那边显示“清单还在整理” */
+  deleteProduct(id: ID): Promise<void>
 }

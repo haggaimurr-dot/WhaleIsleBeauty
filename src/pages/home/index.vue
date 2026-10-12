@@ -19,7 +19,7 @@
     </view>
 
     <view class="trust">
-      <view v-for="t in TRUST" :key="t.text" class="trust__item">
+      <view v-for="t in TRUST" :key="t.text" class="trust__item" @tap="onTrust(t.text)">
         <image class="trust__icon" :src="t.icon" />
         <text>{{ t.text }}</text>
       </view>
@@ -67,6 +67,26 @@
           <text v-if="s.priceFrom" class="price__from">起</text>
         </view>
       </view>
+
+      <template v-if="kits.length">
+        <view class="sec">
+          <text class="sec__title">店里用的化妆品</text>
+          <text class="sec__link" @tap="toProducts()">全部清单 ›</text>
+        </view>
+        <scroll-view scroll-x class="kits" :show-scrollbar="false" enhanced>
+          <view
+            v-for="k in kits"
+            :key="k.category"
+            class="kit"
+            hover-class="card--hover"
+            @tap="toProducts(k.category)"
+          >
+            <view class="kit__name">{{ k.name }}</view>
+            <view class="kit__count">{{ k.count }} 件</view>
+            <view class="kit__brands">{{ k.brands }}</view>
+          </view>
+        </scroll-view>
+      </template>
     </template>
 
     <view class="bottom-space" />
@@ -76,7 +96,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onLoad, onShareAppMessage, onShareTimeline } from '@dcloudio/uni-app'
-import { api, errorText, CATEGORY_LABEL, type Service, type StyleCategory } from '@/api'
+import {
+  api, errorText, CATEGORY_LABEL, PRODUCT_CATEGORY_LABEL,
+  type Product, type ProductCategory, type Service, type StyleCategory,
+} from '@/api'
 import { formatPrice } from '@/utils/money'
 import { SHOP_NAME, sharePath } from '@/utils/share'
 import { switchTab } from '@/utils/tab'
@@ -91,6 +114,7 @@ const TRUST = [
 ]
 
 const services = ref<Service[]>([])
+const products = ref<Product[]>([])
 const status = ref<'loading' | 'ok' | 'error'>('loading')
 const errorMsg = ref('')
 
@@ -107,10 +131,30 @@ const styles = computed(() => {
     }))
 })
 
+/** 化妆品按类别一张卡：几件、哪几个牌子（去重，最多 3 个） */
+const kits = computed(() =>
+  (Object.keys(PRODUCT_CATEGORY_LABEL) as ProductCategory[])
+    .map((c) => {
+      const items = products.value.filter(p => p.category === c)
+      const brands = [...new Set(items.map(p => p.brand))]
+      return {
+        category: c,
+        name: PRODUCT_CATEGORY_LABEL[c],
+        count: items.length,
+        brands: brands.slice(0, 3).join(' · ') + (brands.length > 3 ? ' 等' : ''),
+      }
+    })
+    .filter(k => k.count),
+)
+
 async function load() {
   status.value = 'loading'
   try {
-    services.value = await api.listServices()
+    // 化妆品清单取不到不影响首页，这一块不显示就好
+    ;[services.value, products.value] = await Promise.all([
+      api.listServices(),
+      api.listProducts().catch(() => []),
+    ])
     status.value = 'ok'
   } catch (e) {
     errorMsg.value = errorText(e)
@@ -127,6 +171,10 @@ onShareTimeline(() => ({ title: SHARE_TITLE }))
 const toBooking = () => switchTab('booking')
 const toWorks = (category?: StyleCategory) => switchTab('works', { category })
 const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?id=${id}` })
+const toProducts = (category?: ProductCategory) =>
+  uni.navigateTo({ url: `/pages/products/index${category ? `?category=${category}` : ''}` })
+/** 信任条里只有“用品品牌公开”能点，点了看化妆品清单 */
+const onTrust = (text: string) => { if (text === TRUST[1].text) toProducts() }
 </script>
 
 <style lang="scss">
@@ -317,6 +365,55 @@ page {
     line-height: 1.5;
     font-size: $fs-caption + 2rpx;
     color: $mute;
+  }
+}
+
+.kits {
+  white-space: nowrap;
+  padding-left: $page-x;
+  box-sizing: border-box;
+}
+
+.kit {
+  display: inline-block;
+  width: 216rpx;
+  margin-right: $gap;
+  padding: 28rpx 28rpx 32rpx;
+  box-sizing: border-box;
+  vertical-align: top;
+  border-radius: $r-card;
+  background: $card;
+  box-shadow: $shadow-card;
+  white-space: normal;
+
+  &:last-child {
+    margin-right: $page-x;
+  }
+
+  &__name {
+    font-family: $font-serif;
+    font-weight: $fw-heading;
+    font-size: 30rpx;
+    letter-spacing: $ls-display;
+  }
+
+  &__count {
+    margin-top: 4rpx;
+    font-size: $fs-caption;
+    color: $mute;
+  }
+
+  // 固定两行高，几张卡一样高
+  &__brands {
+    height: 2 * 1.6em;
+    margin-top: 16rpx;
+    font-size: $fs-caption;
+    line-height: 1.6;
+    color: $ink;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 }
 

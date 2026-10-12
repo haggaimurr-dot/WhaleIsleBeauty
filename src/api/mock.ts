@@ -8,8 +8,12 @@ import {
   type DateStr, type DaySchedule, type ID, type Me, type OwnerBookingBrief, type OwnerNoticeKind,
   type ScheduleCell, type Service, type Shop, type SkinProfile, type SkinType, type SlotView,
   type TimeStr, type UpdateSkinProfileReq, type Work, type WorkInput, type Occasion, type MonthStats, TONE_LABEL,
+  type Product, type ProductCategory, PRODUCT_CATEGORY_LABEL,
 } from './types'
-import { cleanArtist, cleanService, cleanShop, cleanWork, validateArtist, validateService, validateShop, validateWork } from './catalog'
+import {
+  cleanArtist, cleanProduct, cleanService, cleanShop, cleanWork,
+  validateArtist, validateProduct, validateService, validateShop, validateWork, LIMITS,
+} from './catalog'
 import { upcomingDates, datesFromToday, toTimestamp, hoursUntil, todayStr, nowTimeStr, parse, toDateStr } from '../utils/date'
 
 // ---------- 种子数据 ----------
@@ -63,6 +67,27 @@ const works: Work[] = [
   { id: 'w7', title: '面试淡妆', category: 'date', artistId: 'a3', serviceId: 's2', image: 'placeholder:g2', ratio: 1.4, durationText: '约 45 分钟' },
   { id: 'w8', title: '证件照妆', category: 'camera', artistId: 'a1', serviceId: 's1', image: 'placeholder:g4', ratio: 1.2, durationText: '约 60 分钟' },
 ]
+
+/** 演示用的清单，店主在小程序里改。按加的先后存，读的时候再按类别排 */
+const products: Product[] = [
+  { id: 'p1', category: 'prep', brand: '雅漾', name: '舒泉调理喷雾', note: '敏感肌可用' },
+  { id: 'p2', category: 'prep', brand: '理肤泉', name: 'B5 修复霜', note: '干皮上妆前先用它保湿' },
+  { id: 'p3', category: 'base', brand: '雅诗兰黛', name: 'DW 持妆粉底液', note: '持妆久，新娘和主持妆用' },
+  { id: 'p4', category: 'base', brand: 'NARS', name: '超方瓶粉底液', note: '轻薄，上镜和日常妆用' },
+  { id: 'p5', category: 'base', brand: 'Laura Mercier', name: '柔光透明散粉', note: '定妆' },
+  { id: 'p6', category: 'eye', brand: '植村秀', name: '砍刀眉笔' },
+  { id: 'p7', category: 'eye', brand: '3CE', name: '九色眼影盘' },
+  { id: 'p8', category: 'eye', brand: 'KISSME', name: '纤长睫毛膏', note: '防水，哭了也不晕' },
+  { id: 'p9', category: 'lip', brand: 'MAC', name: '子弹头口红', note: '每位客人用一次性唇刷取用' },
+  { id: 'p10', category: 'lip', brand: 'NARS', name: '腮红' },
+  { id: 'p11', category: 'remover', brand: '贝德玛', name: '舒妍卸妆水', note: '无酒精，敏感肌可用' },
+]
+
+const PRODUCT_ORDER = Object.keys(PRODUCT_CATEGORY_LABEL) as ProductCategory[]
+
+/** 按类别顺序排，同类里先加的在前（sort 是稳定的） */
+const sortedProducts = () =>
+  [...products].sort((a, b) => PRODUCT_ORDER.indexOf(a.category) - PRODUCT_ORDER.indexOf(b.category))
 
 /** 地址取自原型；电话和坐标是演示用的假数据 */
 let shop: Shop = {
@@ -432,6 +457,10 @@ export const mockApi: Api = {
   },
   async listBookableDates() { await delay(100); return upcomingDates(7) },
   async getShop() { await delay(100); return clone(shop) },
+  async listProducts(category) {
+    await delay()
+    return clone(sortedProducts().filter(p => !category || p.category === category))
+  },
 
   async listSlots(artistId, date, _serviceId, excludeBookingId): Promise<SlotView[]> {
     await delay()
@@ -767,5 +796,26 @@ export const mockApi: Api = {
     await delay(300)
     requireOwner()
     works.splice(indexOrThrow(works, id), 1)
+  },
+
+  async createProduct(req) {
+    await delay(400)
+    requireOwner()
+    if (products.length >= LIMITS.maxProducts) throw new ApiError('UNKNOWN', `化妆品最多放 ${LIMITS.maxProducts} 件`)
+    const p: Product = { id: `p${++seq}`, ...checked(cleanProduct(req), validateProduct) }
+    products.push(p)
+    return clone(p)
+  },
+  async updateProduct(id, req) {
+    await delay(400)
+    requireOwner()
+    const i = indexOrThrow(products, id)
+    products[i] = { id, ...checked(cleanProduct(req), validateProduct) }
+    return clone(products[i])
+  },
+  async deleteProduct(id) {
+    await delay(300)
+    requireOwner()
+    products.splice(indexOrThrow(products, id), 1)
   },
 }

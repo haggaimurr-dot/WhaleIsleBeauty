@@ -99,6 +99,7 @@ src/
 | pages/booking/success | 预约成功 | 预约成功 |
 | pages/me/index | 我的预约 | 我的预约 |
 | pages/me/skin | 肤质档案（普通页面，从“我的”进入） | 无（原型只有入口，按预约页表单样式做） |
+| pages/products/index | 化妆品清单（普通页面，从首页“店里用的化妆品”和信任条“用品品牌公开”进入，query 带 `category` 时预选类别） | 无（按作品页的筛选样式做） |
 | pages-owner/schedule/index | 店主排班（分包） | 排班 |
 | pages-owner/stats/index | 经营统计（分包，从“我的”进入，仅店主）：近 6 个月的预约数、定金收入、取消率、回头客，口径见 `types.ts` 的 `MonthStats` | 无 |
 | pages-owner/catalog/index | 门店资料（分包，从“我的”进入，仅店主） | 无（按肤质档案页的表单样式做） |
@@ -109,6 +110,8 @@ src/
 | pages-owner/catalog/service | 添加 / 修改项目，可下架（query 带 `id` 时是修改） | 无 |
 | pages-owner/catalog/works | 作品列表 | 无 |
 | pages-owner/catalog/work | 添加 / 修改作品（query 带 `id` 时是修改） | 无 |
+| pages-owner/catalog/products | 化妆品列表（按类别分组） | 无 |
+| pages-owner/catalog/product | 添加 / 修改化妆品（query 带 `id` 时是修改） | 无 |
 
 TabBar 包含首页、作品、预约、我的，使用 `pages.json` 的原生 tabBar。图标需要 PNG 格式（81×81），放在 `static/tab/`。
 

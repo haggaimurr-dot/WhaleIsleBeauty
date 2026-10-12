@@ -5,8 +5,8 @@
  * validateXxx 返回第一条不符合的提示，全部符合返回 undefined。字数按字算，一个汉字算 1。
  * 引用关系（作品的化妆师、项目是否存在）不在这里查，由 mock / 后端检查。
  */
-import type { ArtistInput, ServiceInput, Shop, StyleCategory, WorkInput } from './types'
-import { CATEGORY_LABEL } from './types'
+import type { ArtistInput, ProductCategory, ProductInput, ServiceInput, Shop, StyleCategory, WorkInput } from './types'
+import { CATEGORY_LABEL, PRODUCT_CATEGORY_LABEL } from './types'
 
 export const LIMITS = {
   shopName: 20,
@@ -37,6 +37,12 @@ export const LIMITS = {
   durationText: 20,
   minRatio: 0.5,
   maxRatio: 2,
+
+  brand: 20,
+  productName: 30,
+  productNote: 30,
+  /** 化妆品最多放这么多件，清单太长客人也看不完 */
+  maxProducts: 100,
 
   /** 图片字段（placeholder:gN、以后的 fileID / URL） */
   imageRef: 255,
@@ -166,5 +172,24 @@ export function validateWork(w: WorkInput): string | undefined {
     imageRef(w.image, '图片'),
     !isNum(w.ratio) || w.ratio < LIMITS.minRatio || w.ratio > LIMITS.maxRatio ? '图片比例不对' : undefined,
     text(w.durationText, '用时', LIMITS.durationText),
+  )
+}
+
+// ---------- 化妆品 ----------
+
+const isProductCategory = (c: unknown): c is ProductCategory => typeof c === 'string' && c in PRODUCT_CATEGORY_LABEL
+
+export function cleanProduct(p: ProductInput): ProductInput {
+  const out: ProductInput = { category: p.category, brand: trim(p.brand), name: trim(p.name) }
+  if (trim(p.note)) out.note = trim(p.note)
+  return out
+}
+
+export function validateProduct(p: ProductInput): string | undefined {
+  return first(
+    isProductCategory(p.category) ? undefined : '还没选类别',
+    text(p.brand, '品牌', LIMITS.brand),
+    text(p.name, '名称', LIMITS.productName),
+    optText(p.note, '说明', LIMITS.productNote),
   )
 }

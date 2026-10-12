@@ -1,7 +1,7 @@
 <template>
   <PageLayout>
     <template #header>
-      <view class="psub">客人在小程序里看到的门店信息、化妆师、项目和作品都在这里改。改了马上生效，已经下的单不受影响。</view>
+      <view class="psub">客人在小程序里看到的门店信息、化妆师、项目、作品和化妆品都在这里改。改了马上生效，已经下的单不受影响。</view>
     </template>
 
     <view v-if="status === 'error'" class="panel">
@@ -43,6 +43,13 @@
           </view>
           <text class="menu__hint">{{ works.length }} 件</text>
         </view>
+        <view class="menu__row" hover-class="menu__row--hover" @tap="openProducts">
+          <view class="menu__main">
+            化妆品
+            <view class="menu__sub">{{ productSub }}</view>
+          </view>
+          <text class="menu__hint">{{ products.length }} 件</text>
+        </view>
       </view>
     </template>
   </PageLayout>
@@ -51,7 +58,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { api, errorText, ApiError, type Artist, type Service, type Shop, type Work } from '@/api'
+import {
+  api, errorText, ApiError, PRODUCT_CATEGORY_LABEL,
+  type Artist, type Product, type ProductCategory, type Service, type Shop, type Work,
+} from '@/api'
 import AppButton from '@/components/AppButton.vue'
 import PageLayout from '@/components/PageLayout.vue'
 
@@ -71,6 +81,17 @@ const serviceSub = computed(() => {
 const works = ref<Work[]>([])
 const workSub = computed(() => works.value.length ? `最新一件：${works.value[0].title}` : '还没有，放几张客人的妆面吧')
 
+const products = ref<Product[]>([])
+/** 每类几件，例如“底妆 3 · 眼妆 3” */
+const productSub = computed(() => {
+  if (!products.value.length) return '还没有，列出店里用的，客人看了放心'
+  return (Object.keys(PRODUCT_CATEGORY_LABEL) as ProductCategory[])
+    .map(c => [c, products.value.filter(p => p.category === c).length] as const)
+    .filter(([, n]) => n)
+    .map(([c, n]) => `${PRODUCT_CATEGORY_LABEL[c]} ${n}`)
+    .join(' · ')
+})
+
 async function load() {
   // 已经有数据时（从编辑页返回）不清空，避免闪一下
   if (!shop.value) status.value = 'loading'
@@ -78,8 +99,8 @@ async function load() {
     // 先确认是店主：资料本身客人也能读，这里提前挡住，免得进到编辑页才报错
     const me = await api.getMe()
     if (me.role !== 'owner') throw new ApiError('FORBIDDEN', '')
-    ;[shop.value, artists.value, services.value, works.value] = await Promise.all([
-      api.getShop(), api.listArtists(), api.listOwnerServices(), api.listOwnerWorks(),
+    ;[shop.value, artists.value, services.value, works.value, products.value] = await Promise.all([
+      api.getShop(), api.listArtists(), api.listOwnerServices(), api.listOwnerWorks(), api.listProducts(),
     ])
     status.value = 'ok'
   } catch (e) {
@@ -95,6 +116,7 @@ const openShop = () => uni.navigateTo({ url: '/pages-owner/catalog/shop' })
 const openArtists = () => uni.navigateTo({ url: '/pages-owner/catalog/artists' })
 const openServices = () => uni.navigateTo({ url: '/pages-owner/catalog/services' })
 const openWorks = () => uni.navigateTo({ url: '/pages-owner/catalog/works' })
+const openProducts = () => uni.navigateTo({ url: '/pages-owner/catalog/products' })
 </script>
 
 <style lang="scss">

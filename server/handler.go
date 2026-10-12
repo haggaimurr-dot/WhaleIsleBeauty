@@ -140,6 +140,10 @@ func (a *App) Routes() http.Handler {
 		v, err := a.Shop(r.Context())
 		reply(w, r, v, err)
 	})
+	pub("GET /v1/products", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Products(r.Context(), r.URL.Query().Get("category"))
+		reply(w, r, v, err)
+	})
 
 	// ---------- 客人端预约 ----------
 	h("GET /v1/slots", func(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +245,9 @@ func (a *App) Routes() http.Handler {
 	h("POST /v1/owner/works", body(a.CreateWork))
 	h("PUT /v1/owner/works/{id}", bodyID(a.UpdateWork))
 	h("DELETE /v1/owner/works/{id}", del(a.DeleteWork))
+	h("POST /v1/owner/products", body(a.CreateProduct))
+	h("PUT /v1/owner/products/{id}", bodyID(a.UpdateProduct))
+	h("DELETE /v1/owner/products/{id}", del(a.DeleteProduct))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, r, errNotFound) })
 	return mux

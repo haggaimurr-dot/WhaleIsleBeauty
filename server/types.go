@@ -40,6 +40,15 @@ type Work struct {
 	DurationText string  `json:"durationText"`
 }
 
+// Product 店里用的化妆品
+type Product struct {
+	ID       string `json:"id"`
+	Category string `json:"category"`
+	Brand    string `json:"brand"`
+	Name     string `json:"name"`
+	Note     string `json:"note,omitempty"`
+}
+
 type Shop struct {
 	Name      string  `json:"name"`
 	Address   string  `json:"address"`
@@ -207,7 +216,19 @@ var (
 	skinTypes  = set("dry", "oily", "combination", "sensitive", "unsure")
 	skinTones  = set("cool_fair", "warm_fair", "natural", "wheat", "unsure")
 	categories = set("camera", "date", "bridal", "host")
+	// 化妆品类别，按上妆的先后排，和 PRODUCT_CATEGORY_LABEL 的顺序一致
+	productCategories = []string{"prep", "base", "eye", "lip", "remover"}
 )
+
+// productOrder 类别在清单里的位置，不认识的排最后
+func productOrder(c string) int {
+	for i, v := range productCategories {
+		if v == c {
+			return i
+		}
+	}
+	return len(productCategories)
+}
 
 func set(vs ...string) map[string]bool {
 	m := make(map[string]bool, len(vs))

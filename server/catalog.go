@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// 基础资料：门店、化妆师、项目、作品。存在 catalog 表里，每条一行 JSON；第一次启动时写入 seed.go 的初始数据。
+// 基础资料：门店、化妆师、项目、作品、化妆品。存在 catalog 表里，每条一行 JSON；第一次启动时写入 seed.go 的初始数据。
 // 店主在小程序里维护，字段规则和前端 src/api/catalog.ts 一致，改的时候两边一起改。
 // 已有预约存的是下单时的项目名、价格、定金、时长和化妆师名，改资料不影响已经下的单。
 
@@ -21,8 +21,13 @@ const (
 	kindArtist  = "artist"
 	kindService = "service"
 	kindWork    = "work"
+	kindProduct = "product"
 	shopID      = "shop"
 )
+
+// lateSeedKinds 后来才加的资料种类。已经在用的库里补一次初始数据（store_mysql.go 的 seedCatalog），
+// 补过就记下来，之后店主删光了也不会再补
+var lateSeedKinds = []string{kindProduct}
 
 // CatalogItem 存储里的一条资料。Sort 只在新建时写入：化妆师和项目按它升序，作品按它降序（最新的在前）
 type CatalogItem struct {
@@ -37,6 +42,7 @@ type Catalog struct {
 	Artists  []Artist
 	Services []Service // 含已下架的
 	Works    []Work    // 最新的在前
+	Products []Product // 按加的先后，读的时候再按类别排
 }
 
 func (c *Catalog) artist(id string) *Artist {
@@ -77,6 +83,9 @@ func seedCatalogItems() []CatalogItem {
 	for i, w := range seedWorks {
 		out = append(out, item(kindWork, w.ID, int64(len(seedWorks)-i), w))
 	}
+	for i, p := range seedProducts {
+		out = append(out, item(kindProduct, p.ID, int64(i+1), p))
+	}
 	return out
 }
 
@@ -95,7 +104,7 @@ func buildCatalog(items []CatalogItem) (*Catalog, error) {
 		}
 		return a.ID < b.ID
 	})
-	c := &Catalog{Artists: []Artist{}, Services: []Service{}, Works: []Work{}}
+	c := &Catalog{Artists: []Artist{}, Services: []Service{}, Works: []Work{}, Products: []Product{}}
 	for _, it := range sorted {
 		var err error
 		switch it.Kind {
@@ -116,6 +125,11 @@ func buildCatalog(items []CatalogItem) (*Catalog, error) {
 			err = json.Unmarshal(it.Data, &v)
 			v.ID = it.ID
 			c.Works = append(c.Works, v)
+		case kindProduct:
+			var v Product
+			err = json.Unmarshal(it.Data, &v)
+			v.ID = it.ID
+			c.Products = append(c.Products, v)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("catalog %s/%s: %w", it.Kind, it.ID, err)
@@ -159,6 +173,10 @@ const (
 	limMinRatio     = 0.5
 	limMaxRatio     = 2
 	limImageRef     = 255
+	limBrand        = 20
+	limProductName  = 30
+	limProductNote  = 30
+	limMaxProducts  = 100
 )
 
 var phonePattern = regexp.MustCompile(`^[0-9+\- ]+$`)
@@ -327,6 +345,26 @@ func validateWork(v Work) string {
 		imageRule(v.Image, "图片"),
 		ratio,
 		textRule(v.DurationText, "用时", limDurationText),
+	)
+}
+
+func cleanProduct(v Product) Product {
+	return Product{
+		Category: v.Category, Brand: strings.TrimSpace(v.Brand),
+		Name: strings.TrimSpace(v.Name), Note: strings.TrimSpace(v.Note),
+	}
+}
+
+func validateProduct(v Product) string {
+	category := ""
+	if productOrder(v.Category) == len(productCategories) {
+		category = "还没选类别"
+	}
+	return firstRule(
+		category,
+		textRule(v.Brand, "品牌", limBrand),
+		textRule(v.Name, "名称", limProductName),
+		optTextRule(v.Note, "说明", limProductNote),
 	)
 }
 
@@ -617,4 +655,60 @@ func (a *App) DeleteWork(ctx context.Context, u *User, id string) error {
 		return err
 	}
 	return a.remove(ctx, kindWork, id)
+}
+
+// ---------- 化妆品 ----------
+
+// Products 按类别顺序，同一类里先加的在前；category 为空时返回全部
+func (a *App) Products(ctx context.Context, category string) ([]Product, error) {
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []Product{}
+	for _, p := range c.Products {
+		if category == "" || p.Category == category {
+			out = append(out, p)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return productOrder(out[i].Category) < productOrder(out[j].Category) })
+	return out, nil
+}
+
+func (a *App) saveProduct(ctx context.Context, u *User, id string, req Product, isNew bool) (Product, error) {
+	c, err := a.ownerCatalog(ctx, u)
+	if err != nil {
+		return Product{}, err
+	}
+	found := false
+	for _, p := range c.Products {
+		found = found || p.ID == id
+	}
+	if !isNew && !found {
+		return Product{}, errNotFound
+	}
+	if isNew && len(c.Products) >= limMaxProducts {
+		return Product{}, badRequest(fmt.Sprintf("化妆品最多放 %d 件", limMaxProducts))
+	}
+	v := cleanProduct(req)
+	if msg := validateProduct(v); msg != "" {
+		return Product{}, badRequest(msg)
+	}
+	v.ID = id
+	return v, a.put(ctx, kindProduct, id, v)
+}
+
+func (a *App) CreateProduct(ctx context.Context, u *User, req Product) (Product, error) {
+	return a.saveProduct(ctx, u, newID("p"), req, true)
+}
+
+func (a *App) UpdateProduct(ctx context.Context, u *User, id string, req Product) (Product, error) {
+	return a.saveProduct(ctx, u, id, req, false)
+}
+
+func (a *App) DeleteProduct(ctx context.Context, u *User, id string) error {
+	if _, err := a.ownerCatalog(ctx, u); err != nil {
+		return err
+	}
+	return a.remove(ctx, kindProduct, id)
 }

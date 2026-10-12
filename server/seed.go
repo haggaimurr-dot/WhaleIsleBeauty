@@ -52,6 +52,21 @@ var seedWorks = []Work{
 	{ID: "w8", Title: "证件照妆", Category: "camera", ArtistID: "a1", ServiceID: "s1", Image: "placeholder:g4", Ratio: 1.2, DurationText: "约 60 分钟"},
 }
 
+// 演示用的化妆品清单，店主在小程序里改
+var seedProducts = []Product{
+	{ID: "p1", Category: "prep", Brand: "雅漾", Name: "舒泉调理喷雾", Note: "敏感肌可用"},
+	{ID: "p2", Category: "prep", Brand: "理肤泉", Name: "B5 修复霜", Note: "干皮上妆前先用它保湿"},
+	{ID: "p3", Category: "base", Brand: "雅诗兰黛", Name: "DW 持妆粉底液", Note: "持妆久，新娘和主持妆用"},
+	{ID: "p4", Category: "base", Brand: "NARS", Name: "超方瓶粉底液", Note: "轻薄，上镜和日常妆用"},
+	{ID: "p5", Category: "base", Brand: "Laura Mercier", Name: "柔光透明散粉", Note: "定妆"},
+	{ID: "p6", Category: "eye", Brand: "植村秀", Name: "砍刀眉笔"},
+	{ID: "p7", Category: "eye", Brand: "3CE", Name: "九色眼影盘"},
+	{ID: "p8", Category: "eye", Brand: "KISSME", Name: "纤长睫毛膏", Note: "防水，哭了也不晕"},
+	{ID: "p9", Category: "lip", Brand: "MAC", Name: "子弹头口红", Note: "每位客人用一次性唇刷取用"},
+	{ID: "p10", Category: "lip", Brand: "NARS", Name: "腮红"},
+	{ID: "p11", Category: "remover", Brand: "贝德玛", Name: "舒妍卸妆水", Note: "无酒精，敏感肌可用"},
+}
+
 // 地址取自原型；电话和坐标是演示用的假数据
 var seedShop = Shop{
 	Name: "鲸屿美妆", Address: "蓝山CBD 3329", Phone: "020-0000-0000", OpenHours: "09:00–21:00",

@@ -83,6 +83,31 @@ export interface Shop {
   longitude: number
 }
 
+// ---------- 化妆品清单 ----------
+
+/** 按上妆的先后排：客人看清单、店主维护都按这个顺序 */
+export type ProductCategory = 'prep' | 'base' | 'eye' | 'lip' | 'remover'
+
+export const PRODUCT_CATEGORY_LABEL: Record<ProductCategory, string> = {
+  prep: '妆前护肤',
+  base: '底妆',
+  eye: '眼妆',
+  lip: '唇颊',
+  remover: '卸妆',
+}
+
+/** 店里用的化妆品，客人在首页和化妆品清单里按类别看 */
+export interface Product {
+  id: ID
+  category: ProductCategory
+  /** 例如“雅诗兰黛” */
+  brand: string
+  /** 例如“DW 持妆粉底液” */
+  name: string
+  /** 一句说明，例如“无酒精，敏感肌可用” */
+  note?: string
+}
+
 // ---------- 资料维护（店主端） ----------
 
 /** 新建、修改化妆师时提交的内容，整份替换 */
@@ -93,6 +118,9 @@ export type ServiceInput = Omit<Service, 'id' | 'bookedCount'>
 
 /** 新建、修改作品时提交的内容，整份替换 */
 export type WorkInput = Omit<Work, 'id'>
+
+/** 新建、修改化妆品时提交的内容，整份替换 */
+export type ProductInput = Omit<Product, 'id'>
 
 // ---------- 用户 ----------
 

@@ -8,7 +8,8 @@
 		{ "path": "pages/booking/success", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
 		{ "path": "pages/booking/reschedule", "style": { "disableScroll": true, "navigationBarTitleText": "改期" } },
 		{ "path": "pages/me/index", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
-		{ "path": "pages/me/skin", "style": { "disableScroll": true, "navigationBarTitleText": "肤质档案" } }
+		{ "path": "pages/me/skin", "style": { "disableScroll": true, "navigationBarTitleText": "肤质档案" } },
+		{ "path": "pages/products/index", "style": { "disableScroll": true, "navigationBarTitleText": "" } }
 	],
 	"subPackages": [
 		{
@@ -23,7 +24,9 @@
 				{ "path": "catalog/services", "style": { "disableScroll": true, "navigationBarTitleText": "项目" } },
 				{ "path": "catalog/service", "style": { "disableScroll": true, "navigationBarTitleText": "项目" } },
 				{ "path": "catalog/works", "style": { "disableScroll": true, "navigationBarTitleText": "作品" } },
-				{ "path": "catalog/work", "style": { "disableScroll": true, "navigationBarTitleText": "作品" } }
+				{ "path": "catalog/work", "style": { "disableScroll": true, "navigationBarTitleText": "作品" } },
+				{ "path": "catalog/products", "style": { "disableScroll": true, "navigationBarTitleText": "化妆品" } },
+				{ "path": "catalog/product", "style": { "disableScroll": true, "navigationBarTitleText": "化妆品" } }
 			]
 		}
 	],
