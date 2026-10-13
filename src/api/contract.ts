@@ -1,6 +1,6 @@
 import type {
-  Artist, ArtistInput, Booking, CreateBookingReq, CreateBookingResp, DateStr, DaySchedule,
-  ID, Me, MonthStats, OwnerNotifyStatus, Product, ProductCategory, ProductInput, RescheduleReq, Service, ServiceInput, Shop, SkinProfile, SlotView, StyleCategory, TimeStr,
+  Artist, ArtistInput, Booking, Course, CourseInput, CourseProgress, CourseSummary, CreateBookingReq, CreateBookingResp, DateStr, DaySchedule,
+  ID, Me, MonthStats, MyTeaching, Payout, SaveProgressReq, Teacher, TeacherInput, TeacherInvite, OwnerNotifyStatus, Product, ProductCategory, ProductInput, RescheduleReq, Service, ServiceInput, Shop, SkinProfile, SlotView, StyleCategory, TimeStr,
   UpdateSkinProfileReq, Work, WorkInput,
 } from './types'
 
@@ -166,7 +166,7 @@ export interface Api {
   updateArtist(id: ID, req: ArtistInput): Promise<Artist>
   /**
    * DELETE /owner/artists/:id  以下情况返回 INVALID_STATE，message 说明原因：
-   * 还有没结束的预约；名下还有作品（先改给别人或删掉）；只剩这一位
+   * 还有没结束的预约；名下还有作品或课程（先改给别人或删掉）；只剩这一位
    */
   deleteArtist(id: ID): Promise<void>
 
@@ -178,7 +178,7 @@ export interface Api {
   updateService(id: ID, req: ServiceInput): Promise<Service>
   /**
    * DELETE /owner/services/:id  还有没结束的预约、或者是最后一个在接预约的项目时返回 INVALID_STATE。
-   * 删掉后关联它的作品不再带 serviceId
+   * 删掉后关联它的作品和课程不再带 serviceId
    */
   deleteService(id: ID): Promise<void>
 
@@ -195,6 +195,75 @@ export interface Api {
   createProduct(req: ProductInput): Promise<Product>
   /** PUT /owner/products/:id  顺序不变（换了类别就按原来加的先后排进新类别） */
   updateProduct(id: ID, req: ProductInput): Promise<Product>
-  /** DELETE /owner/products/:id  可以删光，客人那边显示“清单还在整理” */
+  /** DELETE /owner/products/:id  可以删光，客人那边显示“清单还在整理”。课程里用到它的地方一起去掉 */
   deleteProduct(id: ID): Promise<void>
+
+  // ---------- 课堂（客人端） ----------
+  // 规则见 types.ts 的“课堂”一节。课程列表和详情是公开资料，朋友圈单页模式不登录也能看
+
+  /** GET /courses?category=  不含已下架的，新的在前 */
+  listCourses(category?: StyleCategory): Promise<CourseSummary[]>
+  /**
+   * GET /courses/:id  已下架的返回 NOT_FOUND（顾客讲师结束合作后，TA 出镜的视频不能再给人看）。
+   * 已登录时带 progress；项目下架时不带 serviceId
+   */
+  getCourse(id: ID): Promise<Course>
+  /**
+   * PUT /courses/:id/progress  记录看到哪了，返回最新进度。播放时每 15 秒、暂停、切小节、离开页面时调一次。
+   * positionSec 超过时长按时长算，离结尾不到 5 秒算看完这一节。课已下架或小节不在这门课里返回 NOT_FOUND
+   */
+  saveCourseProgress(courseId: ID, req: SaveProgressReq): Promise<CourseProgress>
+
+  // ---------- 讲师（顾客端） ----------
+  /** GET /teacher-invites/:code  邀请不存在、已经用过或店主结束了返回 NOT_FOUND */
+  getTeacherInvite(code: string): Promise<TeacherInvite>
+  /**
+   * POST /teacher-invites/:code/accept  body: { agreementVersion }  客人确认授权，成为讲师，Me.teacherId 指向 TA。
+   * 版本不是当前的返回 INVALID_STATE（说明改过了，重新看一遍）；已经是合作中的讲师返回 INVALID_STATE；邀请失效返回 NOT_FOUND
+   */
+  acceptTeacherInvite(code: string, agreementVersion: string): Promise<Teacher>
+  /** GET /me/teaching  我的课和分成。不是讲师返回 NOT_FOUND */
+  getMyTeaching(): Promise<MyTeaching>
+  /**
+   * POST /me/teaching/quit  客人自己结束合作，效果和店主结束一样：TA 的课全部下架，以后从这些课来的预约不再分成，
+   * 已经下了的单到店完成后照常分。不是合作中返回 INVALID_STATE
+   */
+  quitTeaching(): Promise<Teacher>
+
+  // ---------- 课堂（店主端，需要 owner 角色） ----------
+  // 字段规则见 catalog.ts 的 validateCourse / validateTeacher，不符合返回 400 UNKNOWN。
+  // 视频由前端用 wx.cloud.uploadFile 传到云托管对象存储，拿到 fileID 填进 Lesson.video；演示阶段用 placeholder:v1–v3。
+
+  /** GET /owner/courses  全部课程，含已下架的，新的在前 */
+  listOwnerCourses(): Promise<CourseSummary[]>
+  /** GET /owner/courses/:id  编辑用，下架的也返回，项目下架时照常带 serviceId，不带 progress */
+  getOwnerCourse(id: ID): Promise<Course>
+  /**
+   * POST /owner/courses  新的排在最前。化妆师、讲师、项目、化妆品不存在返回 UNKNOWN；
+   * 讲师不是合作中时不能上架（hidden 必须为 true）
+   */
+  createCourse(req: CourseInput): Promise<Course>
+  /** PUT /owner/courses/:id  带 id 的小节必须是这门课原来的，否则返回 UNKNOWN */
+  updateCourse(id: ID, req: CourseInput): Promise<Course>
+  /** DELETE /owner/courses/:id  观看记录一起删；已经记下的分成不受影响 */
+  deleteCourse(id: ID): Promise<void>
+
+  /** GET /owner/teachers  先加的在前 */
+  listTeachers(): Promise<Teacher[]>
+  /** POST /owner/teachers  新讲师是 invited，带 inviteCode */
+  createTeacher(req: TeacherInput): Promise<Teacher>
+  /** PUT /owner/teachers/:id  客人确认过（active / ended）后改分成比例返回 INVALID_STATE */
+  updateTeacher(id: ID, req: TeacherInput): Promise<Teacher>
+  /** POST /owner/teachers/:id/end  结束合作（invited 的就是收回邀请），TA 的课全部下架。已经结束返回 INVALID_STATE */
+  endTeacher(id: ID): Promise<Teacher>
+  /** DELETE /owner/teachers/:id  只能删还没确认、也没有课的；确认过的只能结束合作，返回 INVALID_STATE */
+  deleteTeacher(id: ID): Promise<void>
+
+  /** GET /owner/payouts  最近 6 个月（含本月）每位讲师每月的分成，只返回有分成的，月份新的在前、同月按讲师先后 */
+  listPayouts(): Promise<Payout[]>
+  /**
+   * POST /owner/payouts/:teacherId/:month/paid  线下打完款后标记。
+   * 月份还没过完、这个月没有分成、已经标记过都返回 INVALID_STATE；讲师不存在返回 NOT_FOUND
+   */
+  markPayoutPaid(teacherId: ID, month: string): Promise<Payout>
 }

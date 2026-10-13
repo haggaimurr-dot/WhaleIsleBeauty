@@ -143,6 +143,8 @@ export interface Me {
    * 没填过或全部清空时不返回。完整内容用 getSkinProfile 取
    */
   skinProfile?: string
+  /** 接受过讲师邀请才有（结束合作后也保留，还能看以前的分成），“我的”据此显示“我的课堂”入口 */
+  teacherId?: ID
 }
 
 // ---------- 肤质档案 ----------
@@ -269,6 +271,11 @@ export interface CreateBookingReq {
   occasion?: Occasion
   skinType?: SkinType
   note?: string
+  /**
+   * 客人从哪门课点“预约同款”进来的。课不存在或已下架时后端忽略，不报错。
+   * 课的讲师是授权顾客时，这单到店完成后按讲师的分成比例记一笔分成（见 ShareRecord）
+   */
+  courseId?: ID
 }
 
 /** wx.requestPayment 需要的参数，由后端调用微信支付 V3 下单后生成 */
@@ -336,6 +343,8 @@ export interface OwnerBookingBrief {
   canChange?: boolean
   /** 服务端计算：已确认或已完成、开始时间已过、而且还是预约当天，才为 true，前端据此显示“客人没来” */
   canMarkNoShow?: boolean
+  /** 客人是从这门课点进来约的（下单时的课名） */
+  courseTitle?: string
 }
 
 /**
@@ -387,6 +396,200 @@ export interface MonthStats {
   customers: number
   /** customers 里的回头客：在这个月最后一次预约的日期之前，已经到店完成过至少一次 */
   returning: number
+}
+
+// ---------- 课堂 ----------
+//
+// 课程现在都免费，用来带客人到店。讲师两种：店里的化妆师（artistId），或签了授权的顾客（teacherId，见 Teacher）。
+// 顾客讲师的分成：客人从 TA 的课点“预约同款”下的单，到店完成后按下单时 TA 的分成比例，
+// 从这单的项目标价（Booking.price）里分一笔。讲师自己约自己课的不算。按到店日期归到月份，店主月底后线下打款、在系统里标记已付。
+// 将来收费要走微信虚拟支付，到时再加价格字段。
+
+/** 讲师授权说明的版本。客人确认时带上看到的版本，后端存下来；说明改了就换版本号，旧版本不能再确认 */
+export const TEACHER_AGREEMENT_VERSION = '2026-10'
+
+/** 课程卡片和详情上显示的讲师 */
+export interface CourseTeacher {
+  kind: 'artist' | 'customer'
+  name: string
+  avatar: string
+  /** 化妆师：例如“主理人 · 8 年”，由服务端用头衔和年限拼；顾客讲师：店主写的一句介绍 */
+  intro?: string
+}
+
+export interface Lesson {
+  id: ID
+  title: string
+  /** 视频：演示阶段是 placeholder:v1 这类占位，接云存储后是 cloud:// 开头的 fileID */
+  video: string
+  /** 视频时长，秒。上传时由前端从 chooseMedia 拿到 */
+  durationSec: number
+  /** 这一节用到的化妆品，都在本课的 products 里 */
+  productIds: ID[]
+}
+
+export interface Chapter {
+  title: string
+  lessons: Lesson[]
+}
+
+/** 课里用到的化妆品：店里清单里的一件，加上讲师的一句用法 */
+export interface CourseProduct extends Product {
+  /** 例如“挤一颗黄豆大就够” */
+  tip?: string
+}
+
+export interface CourseSummary {
+  id: ID
+  title: string
+  /** 一句话介绍 */
+  summary: string
+  category: StyleCategory
+  cover: string
+  teacher: CourseTeacher
+  lessonCount: number
+  /** 所有小节加起来，秒 */
+  durationSec: number
+  /** 已下架：只有店主接口和“我的课堂”会返回 */
+  hidden?: boolean
+}
+
+/** 客人在一门课上看到哪了。没看过不返回 */
+export interface CourseProgress {
+  /** 最近在看的小节 */
+  lessonId: ID
+  /** 看到第几秒 */
+  positionSec: number
+  /** 看完的小节（看到离结尾不到 5 秒就算） */
+  finishedLessonIds: ID[]
+  updatedAt: Timestamp
+}
+
+export interface Course extends CourseSummary {
+  /** 二选一：化妆师自己录的 */
+  artistId?: ID
+  /** 二选一：顾客讲师录的 */
+  teacherId?: ID
+  /** “预约同款”预选的项目。客人端在项目下架时不返回 */
+  serviceId?: ID
+  chapters: Chapter[]
+  /** 按讲师排的顺序 */
+  products: CourseProduct[]
+  /** 只在客人端 getCourse 且已登录时返回 */
+  progress?: CourseProgress
+}
+
+/** 新建、修改小节：带 id 的是原来的小节（保留客人的观看记录），不带的是新加的 */
+export type LessonInput = Omit<Lesson, 'id'> & { id?: ID }
+
+/** 新建、修改课程时提交的内容，整份替换。lessonCount、durationSec、teacher 由服务端算 */
+export interface CourseInput {
+  title: string
+  summary: string
+  category: StyleCategory
+  cover: string
+  artistId?: ID
+  teacherId?: ID
+  serviceId?: ID
+  chapters: { title: string, lessons: LessonInput[] }[]
+  products: { productId: ID, tip?: string }[]
+  /** 讲师还没确认授权或已经结束合作时，只能存成下架 */
+  hidden?: boolean
+}
+
+export interface SaveProgressReq {
+  lessonId: ID
+  positionSec: number
+}
+
+/**
+ * 顾客讲师。店主先填好名字、分成比例发出邀请（invited，带 inviteCode），
+ * 客人打开邀请、看过授权说明点确认后变成 active；任何一方结束合作后是 ended，TA 的课全部下架。
+ * 分成比例客人确认后就不能改，要改只能结束合作再重新邀请。
+ */
+export type TeacherStatus = 'invited' | 'active' | 'ended'
+
+export const TEACHER_STATUS_LABEL: Record<TeacherStatus, string> = {
+  invited: '等 TA 确认', active: '合作中', ended: '已结束',
+}
+
+export interface Teacher {
+  id: ID
+  /** 课程上显示的名字，例如“林小姐” */
+  name: string
+  avatar: string
+  intro?: string
+  /** 分成比例，百分比整数（20 表示 20%） */
+  shareRate: number
+  status: TeacherStatus
+  /** 仅店主接口、而且是 invited 时有：拼到邀请链接里发给客人 */
+  inviteCode?: string
+  /** 客人确认授权的时间和看到的说明版本 */
+  agreedAt?: Timestamp
+  agreementVersion?: string
+  endedAt?: Timestamp
+}
+
+/** 新建、修改讲师时提交的内容，整份替换 */
+export type TeacherInput = Pick<Teacher, 'name' | 'avatar' | 'intro' | 'shareRate'>
+
+/** 客人打开邀请时看到的内容 */
+export interface TeacherInvite {
+  code: string
+  name: string
+  shareRate: number
+  shopName: string
+  /** 当前的授权说明版本，确认时原样带回 */
+  agreementVersion: string
+}
+
+/** 一笔分成：一单从讲师的课来、已经到店完成的预约 */
+export interface ShareRecord {
+  bookingId: ID
+  /** 到店日期 */
+  date: DateStr
+  serviceName: string
+  courseTitle: string
+  /** 这单的项目标价 */
+  price: Cents
+  /** 下单时讲师的分成比例 */
+  rate: number
+  /** price × rate / 100，舍去不足 1 分的部分 */
+  amount: Cents
+}
+
+/**
+ * open：这个月还没过完，数字还会变；due：月份已过，等店里打款；paid：店里标记已付，金额和明细不再变
+ */
+export type PayoutStatus = 'open' | 'due' | 'paid'
+
+export const PAYOUT_STATUS_LABEL: Record<PayoutStatus, string> = {
+  open: '本月进行中', due: '待付', paid: '已付',
+}
+
+/** 一位讲师一个月的分成 */
+export interface Payout {
+  teacherId: ID
+  teacherName: string
+  /** 'YYYY-MM' */
+  month: string
+  status: PayoutStatus
+  /** 几单 */
+  count: number
+  amount: Cents
+  paidAt?: Timestamp
+  /** 按到店日期排 */
+  records: ShareRecord[]
+}
+
+/** 顾客讲师在“我的课堂”里看到的 */
+export interface MyTeaching {
+  /** 不带 inviteCode */
+  teacher: Teacher
+  /** TA 的课，含已下架的 */
+  courses: CourseSummary[]
+  /** 最近 6 个月里有分成的月份，新的在前 */
+  payouts: Payout[]
 }
 
 // ---------- 错误 ----------

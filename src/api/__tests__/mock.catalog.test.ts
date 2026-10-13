@@ -81,6 +81,7 @@ describe('化妆师', () => {
 
   it('不能删到一位都不剩', async () => {
     for (const w of await api.listOwnerWorks()) await api.deleteWork(w.id)
+    for (const c of await api.listOwnerCourses()) await api.deleteCourse(c.id)
     await api.deleteArtist('a2')
     await api.deleteArtist('a3')
     await expect(api.deleteArtist('a1')).rejects.toSatisfy(e => message(e) === '至少要留一位化妆师')

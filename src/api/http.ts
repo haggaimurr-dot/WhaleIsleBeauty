@@ -200,6 +200,29 @@ export const httpApi: Api = {
   createProduct: (req) => request('POST', '/owner/products', req),
   updateProduct: (id, req) => request('PUT', `/owner/products/${id}`, req),
   deleteProduct: (id) => request('DELETE', `/owner/products/${id}`),
+
+  listCourses: (category) => request('GET', '/courses' + qs({ category })),
+  getCourse: (id) => request('GET', `/courses/${id}`),
+  saveCourseProgress: (courseId, req) => request('PUT', `/courses/${courseId}/progress`, req),
+
+  getTeacherInvite: (code) => request('GET', `/teacher-invites/${encodeURIComponent(code)}`),
+  acceptTeacherInvite: (code, agreementVersion) =>
+    request('POST', `/teacher-invites/${encodeURIComponent(code)}/accept`, { agreementVersion }),
+  getMyTeaching: () => request('GET', '/me/teaching'),
+  quitTeaching: () => request('POST', '/me/teaching/quit'),
+
+  listOwnerCourses: () => request('GET', '/owner/courses'),
+  getOwnerCourse: (id) => request('GET', `/owner/courses/${id}`),
+  createCourse: (req) => request('POST', '/owner/courses', req),
+  updateCourse: (id, req) => request('PUT', `/owner/courses/${id}`, req),
+  deleteCourse: (id) => request('DELETE', `/owner/courses/${id}`),
+  listTeachers: () => request('GET', '/owner/teachers'),
+  createTeacher: (req) => request('POST', '/owner/teachers', req),
+  updateTeacher: (id, req) => request('PUT', `/owner/teachers/${id}`, req),
+  endTeacher: (id) => request('POST', `/owner/teachers/${id}/end`),
+  deleteTeacher: (id) => request('DELETE', `/owner/teachers/${id}`),
+  listPayouts: () => request('GET', '/owner/payouts'),
+  markPayoutPaid: (teacherId, month) => request('POST', `/owner/payouts/${teacherId}/${month}/paid`),
 }
 
 /**

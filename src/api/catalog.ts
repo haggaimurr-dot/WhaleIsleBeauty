@@ -5,7 +5,7 @@
  * validateXxx 返回第一条不符合的提示，全部符合返回 undefined。字数按字算，一个汉字算 1。
  * 引用关系（作品的化妆师、项目是否存在）不在这里查，由 mock / 后端检查。
  */
-import type { ArtistInput, ProductCategory, ProductInput, ServiceInput, Shop, StyleCategory, WorkInput } from './types'
+import type { ArtistInput, CourseInput, ProductCategory, ProductInput, ServiceInput, Shop, StyleCategory, TeacherInput, WorkInput } from './types'
 import { CATEGORY_LABEL, PRODUCT_CATEGORY_LABEL } from './types'
 
 export const LIMITS = {
@@ -44,7 +44,25 @@ export const LIMITS = {
   /** 化妆品最多放这么多件，清单太长客人也看不完 */
   maxProducts: 100,
 
-  /** 图片字段（placeholder:gN、以后的 fileID / URL） */
+  courseTitle: 20,
+  courseSummary: 60,
+  chapters: 20,
+  chapterTitle: 20,
+  /** 每一章最多几节 */
+  lessons: 30,
+  lessonTitle: 30,
+  /** 一节最长 1 小时 */
+  maxLessonSec: 3600,
+  courseProducts: 30,
+  productTip: 40,
+  maxCourses: 100,
+
+  teacherName: 10,
+  teacherIntro: 30,
+  /** 分成比例上限，百分比 */
+  maxShareRate: 50,
+
+  /** 图片、视频字段（placeholder:gN / vN、以后的 fileID / URL） */
   imageRef: 255,
 } as const
 
@@ -191,5 +209,84 @@ export function validateProduct(p: ProductInput): string | undefined {
     text(p.brand, '品牌', LIMITS.brand),
     text(p.name, '名称', LIMITS.productName),
     optText(p.note, '说明', LIMITS.productNote),
+  )
+}
+
+// ---------- 课程 ----------
+
+const uniq = (list?: string[]) => [...new Set((list ?? []).filter(Boolean))]
+
+export function cleanCourse(c: CourseInput): CourseInput {
+  const seen = new Set<string>()
+  const out: CourseInput = {
+    title: trim(c.title), summary: trim(c.summary), category: c.category, cover: trim(c.cover),
+    chapters: (c.chapters ?? []).map(ch => ({
+      title: trim(ch.title),
+      lessons: (ch.lessons ?? []).map(l => {
+        const lesson: CourseInput['chapters'][number]['lessons'][number] = {
+          title: trim(l.title), video: trim(l.video), durationSec: l.durationSec, productIds: uniq(l.productIds),
+        }
+        if (l.id) lesson.id = l.id
+        return lesson
+      }),
+    })),
+    // 同一件化妆品只留第一次出现的
+    products: (c.products ?? []).filter(p => p.productId && !seen.has(p.productId) && seen.add(p.productId)).map(p => {
+      const item: CourseInput['products'][number] = { productId: p.productId }
+      if (trim(p.tip)) item.tip = trim(p.tip)
+      return item
+    }),
+  }
+  if (c.artistId) out.artistId = c.artistId
+  if (c.teacherId) out.teacherId = c.teacherId
+  if (c.serviceId) out.serviceId = c.serviceId
+  if (c.hidden) out.hidden = true
+  return out
+}
+
+export function validateCourse(c: CourseInput): string | undefined {
+  const lessons = c.chapters.flatMap(ch => ch.lessons)
+  const productIds = new Set(c.products.map(p => p.productId))
+  return first(
+    text(c.title, '课程名', LIMITS.courseTitle),
+    text(c.summary, '一句话介绍', LIMITS.courseSummary),
+    isCategory(c.category) ? undefined : '还没选风格',
+    imageRef(c.cover, '封面'),
+    !c.artistId && !c.teacherId ? '还没选讲师' : undefined,
+    c.artistId && c.teacherId ? '讲师只能选一位' : undefined,
+    !c.chapters.length ? '至少要有一章' : undefined,
+    c.chapters.length > LIMITS.chapters ? `最多 ${LIMITS.chapters} 章` : undefined,
+    ...c.chapters.flatMap(ch => [
+      text(ch.title, '章节名', LIMITS.chapterTitle),
+      !ch.lessons.length ? `「${ch.title}」还没有小节` : undefined,
+      ch.lessons.length > LIMITS.lessons ? `每章最多 ${LIMITS.lessons} 节` : undefined,
+    ]),
+    ...lessons.flatMap(l => [
+      text(l.title, '小节名', LIMITS.lessonTitle),
+      !l.video ? `「${l.title}」还没传视频` : l.video.length > LIMITS.imageRef ? `「${l.title}」的视频地址太长了` : undefined,
+      !isInt(l.durationSec) || l.durationSec < 1 || l.durationSec > LIMITS.maxLessonSec
+        ? `「${l.title}」的视频要在 ${LIMITS.maxLessonSec / 60} 分钟以内` : undefined,
+      l.productIds.some(id => !productIds.has(id)) ? `「${l.title}」用到的化妆品要先加进本课清单` : undefined,
+    ]),
+    c.products.length > LIMITS.courseProducts ? `本课清单最多 ${LIMITS.courseProducts} 件` : undefined,
+    c.products.find(p => p.tip && len(p.tip) > LIMITS.productTip) ? `化妆品用法每条最多 ${LIMITS.productTip} 个字` : undefined,
+  )
+}
+
+// ---------- 讲师 ----------
+
+export function cleanTeacher(t: TeacherInput): TeacherInput {
+  const out: TeacherInput = { name: trim(t.name), avatar: trim(t.avatar), shareRate: t.shareRate }
+  if (trim(t.intro)) out.intro = trim(t.intro)
+  return out
+}
+
+export function validateTeacher(t: TeacherInput): string | undefined {
+  return first(
+    text(t.name, '名字', LIMITS.teacherName),
+    optText(t.intro, '介绍', LIMITS.teacherIntro),
+    imageRef(t.avatar, '头像'),
+    !isInt(t.shareRate) || t.shareRate < 0 || t.shareRate > LIMITS.maxShareRate
+      ? `分成比例填 0–${LIMITS.maxShareRate} 的整数` : undefined,
   )
 }
