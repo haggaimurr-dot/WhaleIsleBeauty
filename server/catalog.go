@@ -27,7 +27,7 @@ const (
 
 // lateSeedKinds 后来才加的资料种类。已经在用的库里补一次初始数据（store_mysql.go 的 seedCatalog），
 // 补过就记下来，之后店主删光了也不会再补
-var lateSeedKinds = []string{kindProduct}
+var lateSeedKinds = []string{kindProduct, kindCourse}
 
 // CatalogItem 存储里的一条资料。Sort 只在新建时写入：化妆师和项目按它升序，作品按它降序（最新的在前）
 type CatalogItem struct {
@@ -87,6 +87,10 @@ func seedCatalogItems() []CatalogItem {
 	}
 	for i, p := range seedProducts {
 		out = append(out, item(kindProduct, p.ID, int64(i+1), p))
+	}
+	// 课程按 sort 降序（新的在前），c2 排在 c1 前面
+	for i, r := range seedCourses {
+		out = append(out, item(kindCourse, r.ID, int64(i+1), r.CourseInput))
 	}
 	return out
 }

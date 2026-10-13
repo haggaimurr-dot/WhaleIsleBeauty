@@ -35,6 +35,12 @@ func newClassroom(t *testing.T) *classroom {
 	a, c := newTestApp(t)
 	ctx := context.Background()
 	r := &classroom{a: a, c: c, owner: user(t, a, ownerOpenID), lin: user(t, a, "o-lin")}
+	// 从空的课堂开始，不受初始课程影响（初始课程见 TestSeedCourses）
+	for _, id := range []string{"c1", "c2"} {
+		if err := a.DeleteCourse(ctx, r.owner, id); err != nil {
+			t.Fatal(err)
+		}
+	}
 	inv := must(a.CreateTeacher(ctx, r.owner, testTeacher))
 	r.teacher = must(a.AcceptTeacherInvite(ctx, r.lin, inv.InviteCode, AcceptInviteReq{AgreementVersion: TeacherAgreementVersion}))
 	r.c1 = must(a.CreateCourse(ctx, r.owner, CourseInput{
@@ -495,5 +501,25 @@ func TestCoursesHTTP(t *testing.T) {
 	status, _, _ = do(t, h, "GET", "/v1/teacher-invites/NOPE1234", "o-alice", "")
 	if status != http.StatusNotFound {
 		t.Fatalf("invite %d", status)
+	}
+}
+
+func TestSeedCourses(t *testing.T) {
+	a, _ := newTestApp(t)
+	ctx := context.Background()
+	c, err := a.catalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 初始课程要能通过店主保存时的同一套检查
+	for i := range c.Courses {
+		r := &c.Courses[i]
+		if _, err := a.checkCourse(c, r.CourseInput, r); err != nil {
+			t.Fatalf("seed %s: %v", r.ID, err)
+		}
+	}
+	list := must(a.Courses(ctx, ""))
+	if len(list) != 2 || list[0].ID != "c2" || list[1].ID != "c1" || list[1].Teacher.Name != "七七" {
+		t.Fatalf("seed courses %+v", list)
 	}
 }

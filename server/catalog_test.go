@@ -130,6 +130,11 @@ func TestKeepOneArtist(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, c := range must(a.OwnerCourses(ctx, owner)) {
+		if err := a.DeleteCourse(ctx, owner, c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, id := range []string{"a2", "a3"} {
 		if err := a.DeleteArtist(ctx, owner, id); err != nil {
 			t.Fatal(err)

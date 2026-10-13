@@ -81,3 +81,37 @@ func isSlotTime(t string) bool {
 	}
 	return false
 }
+
+// seedCourses 演示用的两门课，和 mock.ts 的 c1、c2 一样（顾客讲师的 c3 要先有讲师，不放）。
+// 视频是 placeholder:v1 / v2 占位，小程序里按演示视频播放；店主传了真视频后改掉或删掉就好
+var seedCourses = []courseRec{
+	{ID: "c1", CourseInput: CourseInput{
+		Title: "五分钟通勤妆", Summary: "赶时间也来得及的日常妆，跟着画一遍就会", Category: "date", Cover: "placeholder:g4",
+		ArtistID: "a3", ServiceID: "s2",
+		Chapters: []Chapter{
+			{Title: "准备", Lessons: []Lesson{
+				{ID: "l1", Title: "妆前护肤怎么做", Video: "placeholder:v1", DurationSec: 240, ProductIDs: []string{"p1", "p2"}},
+			}},
+			{Title: "上妆", Lessons: []Lesson{
+				{ID: "l2", Title: "底妆只用一支", Video: "placeholder:v1", DurationSec: 420, ProductIDs: []string{"p4", "p5"}},
+				{ID: "l3", Title: "眉毛和睫毛", Video: "placeholder:v1", DurationSec: 360, ProductIDs: []string{"p6", "p8"}},
+				{ID: "l4", Title: "唇颊一支搞定", Video: "placeholder:v1", DurationSec: 180, ProductIDs: []string{"p9", "p10"}},
+			}},
+		},
+		Products: []CourseProductRef{
+			{ProductID: "p1", Tip: "先喷一层，等它吸收"}, {ProductID: "p2", Tip: "干皮多抹一点"},
+			{ProductID: "p4", Tip: "挤一颗黄豆大就够"}, {ProductID: "p5"}, {ProductID: "p6"}, {ProductID: "p8"},
+			{ProductID: "p9", Tip: "也可以点在脸颊当腮红"}, {ProductID: "p10"},
+		},
+	}},
+	{ID: "c2", CourseInput: CourseInput{
+		Title: "上镜底妆不假面", Summary: "拍照灯光下也自然的底妆，证件照不用愁", Category: "camera", Cover: "placeholder:g2",
+		ArtistID: "a1", ServiceID: "s1",
+		Chapters: []Chapter{{Title: "底妆", Lessons: []Lesson{
+			{ID: "l5", Title: "先看清自己的肤质", Video: "placeholder:v2", DurationSec: 300, ProductIDs: []string{}},
+			{ID: "l6", Title: "粉底怎么推开", Video: "placeholder:v2", DurationSec: 540, ProductIDs: []string{"p3", "p4"}},
+			{ID: "l7", Title: "定妆不卡粉", Video: "placeholder:v2", DurationSec: 300, ProductIDs: []string{"p5"}},
+		}}},
+		Products: []CourseProductRef{{ProductID: "p3", Tip: "要持妆一整天的时候用"}, {ProductID: "p4", Tip: "日常和拍照用它，更轻薄"}, {ProductID: "p5"}},
+	}},
+}
