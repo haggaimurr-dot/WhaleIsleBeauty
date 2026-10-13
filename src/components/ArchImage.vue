@@ -1,7 +1,7 @@
 <template>
   <view
     class="arch-image"
-    :class="{ 'arch-image--arch': shape === 'arch' }"
+    :class="{ 'arch-image--arch': shape === 'arch', 'arch-image--fill': fill }"
   >
     <view v-if="placeholder" class="arch-image__fill arch-image__ph" :class="`arch-image__ph--${placeholder}`" />
     <image v-else class="arch-image__fill" :src="src" :mode="mode" />
@@ -28,6 +28,11 @@ const props = withDefaults(defineProps<{
   /** 图片底部的小字，例如“作品图” */
   label?: string
   mode?: 'aspectFill' | 'aspectFit' | 'widthFix'
+  /**
+   * 撑满父元素。放在别的组件里时，那个组件给的 class 样式够不着这里（样式隔离），
+   * 就把尺寸写在外面包的 view 上，这里加 fill
+   */
+  fill?: boolean
 }>(), {
   shape: 'arch',
   mode: 'aspectFill',
@@ -48,6 +53,11 @@ const placeholder = computed(() => {
 
   &--arch {
     border-radius: $r-arch;
+  }
+
+  &--fill {
+    width: 100%;
+    height: 100%;
   }
 
   &__fill {

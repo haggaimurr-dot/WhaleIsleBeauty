@@ -33,7 +33,6 @@
           placeholder="比如 赶时间也来得及的日常妆，跟着画一遍就会"
           placeholder-class="field__ph"
           :maxlength="LIMITS.courseSummary"
-          auto-height
         />
       </view>
 
@@ -596,8 +595,7 @@ function remove() {
   color: $ink;
 
   &--area {
-    height: auto;
-    min-height: 140rpx;
+    height: 168rpx;
     padding: 24rpx 28rpx;
     line-height: 1.6;
   }

@@ -2,7 +2,7 @@
   <view class="player">
     <!-- 还没开始播：封面 + 播放键，写清楚要播哪一节、从哪接着看 -->
     <view v-if="!started" class="player__poster" @tap="start">
-      <ArchImage class="player__fill" shape="rect" :src="cover" />
+      <view class="player__fill"><ArchImage shape="rect" :src="cover" fill /></view>
       <view class="player__shade" />
       <view class="player__play"><view class="player__tri" /></view>
       <view class="player__caption">
@@ -13,7 +13,7 @@
 
     <!-- 演示数据没有真视频：用计时代替播放，10 倍速，方便试进度 -->
     <view v-else-if="demo" class="player__demo" @tap="toggleDemo">
-      <ArchImage class="player__fill" shape="rect" :src="cover" />
+      <view class="player__fill"><ArchImage shape="rect" :src="cover" fill /></view>
       <view class="player__shade" />
       <view class="player__demo-text">
         <view class="player__title">{{ lesson.title }}</view>
@@ -161,10 +161,10 @@ defineExpose({ stop })
   background: $ink;
   overflow: hidden;
 
+  &__fill,
   &__poster,
   &__demo,
   &__video,
-  &__fill,
   &__shade {
     position: absolute;
     top: 0;

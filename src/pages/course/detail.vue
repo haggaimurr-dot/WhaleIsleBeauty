@@ -139,7 +139,7 @@ const teacherIntro = computed(() => {
   const t = course.value?.teacher
   if (!t) return ''
   // 顾客讲师说清楚是谁：客人自己录的，不是店里的化妆师
-  return t.kind === 'customer' ? ['常来的客人，自己录的', t.intro].filter(Boolean).join(' · ') : `化妆师${t.intro ? ` · ${t.intro}` : ''}`
+  return t.kind === 'customer' ? (t.intro ? `客人分享 · ${t.intro}` : '常来的客人，自己录的') : `化妆师${t.intro ? ` · ${t.intro}` : ''}`
 })
 
 const barTitle = computed(() => service.value?.name ?? '想让化妆师来画？')

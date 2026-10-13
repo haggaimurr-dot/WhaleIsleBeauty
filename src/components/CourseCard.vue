@@ -1,6 +1,7 @@
 <template>
   <view class="course-card" hover-class="course-card--hover" @tap="emit('click')">
-    <ArchImage class="course-card__cover" shape="rect" :src="course.cover" />
+    <!-- 组件里的 ArchImage 拿不到这里的 class 样式（样式隔离），尺寸放在外层 -->
+    <view class="course-card__cover"><ArchImage shape="rect" :src="course.cover" fill /></view>
     <view class="course-card__body">
       <view class="course-card__title">
         <text>{{ course.title }}</text>
@@ -8,7 +9,7 @@
       </view>
       <view class="course-card__summary">{{ course.summary }}</view>
       <view class="course-card__teacher">
-        <ArchImage class="course-card__avatar" :src="course.teacher.avatar" />
+        <view class="course-card__avatar"><ArchImage :src="course.teacher.avatar" fill /></view>
         <text class="course-card__name">{{ course.teacher.name }}</text>
         <text v-if="course.teacher.kind === 'customer'" class="course-card__kind">客人分享</text>
       </view>
@@ -51,6 +52,7 @@ const emit = defineEmits<{ (e: 'click'): void }>()
     width: 176rpx;
     height: 220rpx;
     border-radius: $r-inner;
+    overflow: hidden;
   }
 
   &__body {
