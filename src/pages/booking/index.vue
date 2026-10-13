@@ -138,6 +138,8 @@ const summary = computed(() => {
 
 /** 从作品页“预约同款”、详情页“预约这个妆”带过来的预选 */
 let pendingParams: TabParams['booking']
+/** 从课程“预约同款”进来的，下单时带上；约完或换了别的入口进来就清掉 */
+let courseId: ID | undefined
 
 /** “再约一次”预选的组合；客人换了项目或化妆师，提示就收起 */
 const again = ref<{ serviceId: ID; artistId: ID }>()
@@ -152,6 +154,7 @@ function applyParams() {
   const artistOk = !p.artistId || artists.value.some(a => a.id === p.artistId)
   if (p.serviceId && serviceOk) serviceId.value = p.serviceId
   if (p.artistId && artistOk) artistId.value = p.artistId
+  courseId = p.courseId
   time.value = undefined
   again.value = p.again && p.serviceId && p.artistId && serviceOk && artistOk
     ? { serviceId: p.serviceId, artistId: p.artistId }
@@ -225,6 +228,7 @@ async function submit() {
   const req = {
     serviceId: s.id, artistId: artistId.value, date: date.value, time: time.value,
     occasion: occasion.value, skinType: skinType.value, note: note.value.trim() || undefined,
+    courseId,
   }
   const key = [req.serviceId, req.artistId, req.date, req.time].join('|')
 
@@ -262,6 +266,7 @@ async function resume(id: ID) {
 function resetForm() {
   time.value = undefined
   again.value = undefined
+  courseId = undefined
   occasion.value = undefined
   skinType.value = profileSkin.value
   note.value = ''

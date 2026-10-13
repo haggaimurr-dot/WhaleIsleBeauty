@@ -1,6 +1,6 @@
 /** 工具函数：日期、金额、分享、订阅消息、作品图尺寸 */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addMinutes, datesFromToday, dayLabel, formatClock, formatDateCN, upcomingDates } from '@/utils/date'
+import { addMinutes, datesFromToday, dayLabel, formatClock, formatCourseMinutes, formatDateCN, formatMonth, formatPlayTime, upcomingDates } from '@/utils/date'
 import { centsToYuanInput, formatPrice, parseYuan } from '@/utils/money'
 import { isSinglePage, shareImage, sharePath, shareQuery } from '@/utils/share'
 import { requestSubscribe, SUBSCRIBE_TEMPLATES } from '@/utils/subscribe'
@@ -27,6 +27,14 @@ describe('date', () => {
     expect(addMinutes('09:00', 90)).toBe('10:30')
     expect(addMinutes('19:30', 45)).toBe('20:15')
     expect(formatClock(new Date(2026, 8, 30, 18, 5).toISOString())).toBe('18:05')
+  })
+
+  it('课程的时长和月份', () => {
+    useMockClock()
+    expect([0, 65, 600, 3725].map(formatPlayTime)).toEqual(['0:00', '1:05', '10:00', '1:02:05'])
+    expect([20, 1200, 1250].map(formatCourseMinutes)).toEqual(['约 1 分钟', '约 20 分钟', '约 21 分钟'])
+    expect(formatMonth('2026-09')).toBe('9 月')
+    expect(formatMonth('2025-12')).toBe('2025 年 12 月')
   })
 })
 

@@ -68,6 +68,26 @@
         </view>
       </view>
 
+      <template v-if="courses.length">
+        <view class="sec">
+          <text class="sec__title">课堂</text>
+          <text class="sec__link" @tap="toCourses">全部课程 ›</text>
+        </view>
+        <scroll-view scroll-x class="lessons" :show-scrollbar="false" enhanced>
+          <view
+            v-for="c in courses"
+            :key="c.id"
+            class="lesson"
+            hover-class="card--hover"
+            @tap="toCourse(c.id)"
+          >
+            <ArchImage class="lesson__cover" shape="rect" :src="c.cover" />
+            <view class="lesson__title">{{ c.title }}</view>
+            <view class="lesson__sub">{{ c.teacher.name }} · {{ c.lessonCount }} 节</view>
+          </view>
+        </scroll-view>
+      </template>
+
       <template v-if="kits.length">
         <view class="sec">
           <text class="sec__title">店里用的化妆品</text>
@@ -98,7 +118,7 @@ import { computed, ref } from 'vue'
 import { onLoad, onShareAppMessage, onShareTimeline } from '@dcloudio/uni-app'
 import {
   api, errorText, CATEGORY_LABEL, PRODUCT_CATEGORY_LABEL,
-  type Product, type ProductCategory, type Service, type StyleCategory,
+  type CourseSummary, type Product, type ProductCategory, type Service, type StyleCategory,
 } from '@/api'
 import { formatPrice } from '@/utils/money'
 import { SHOP_NAME, sharePath } from '@/utils/share'
@@ -115,6 +135,8 @@ const TRUST = [
 
 const services = ref<Service[]>([])
 const products = ref<Product[]>([])
+/** 首页只放最新的几门 */
+const courses = ref<CourseSummary[]>([])
 const status = ref<'loading' | 'ok' | 'error'>('loading')
 const errorMsg = ref('')
 
@@ -150,10 +172,11 @@ const kits = computed(() =>
 async function load() {
   status.value = 'loading'
   try {
-    // 化妆品清单取不到不影响首页，这一块不显示就好
-    ;[services.value, products.value] = await Promise.all([
+    // 化妆品清单、课程取不到不影响首页，这一块不显示就好
+    ;[services.value, products.value, courses.value] = await Promise.all([
       api.listServices(),
       api.listProducts().catch(() => []),
+      api.listCourses().then(list => list.slice(0, 6)).catch(() => []),
     ])
     status.value = 'ok'
   } catch (e) {
@@ -173,6 +196,8 @@ const toWorks = (category?: StyleCategory) => switchTab('works', { category })
 const toService = (id: string) => uni.navigateTo({ url: `/pages/service/detail?id=${id}` })
 const toProducts = (category?: ProductCategory) =>
   uni.navigateTo({ url: `/pages/products/index${category ? `?category=${category}` : ''}` })
+const toCourses = () => uni.navigateTo({ url: '/pages/course/index' })
+const toCourse = (id: string) => uni.navigateTo({ url: `/pages/course/detail?id=${id}` })
 /** 信任条里只有“用品品牌公开”能点，点了看化妆品清单 */
 const onTrust = (text: string) => { if (text === TRUST[1].text) toProducts() }
 </script>
@@ -364,6 +389,45 @@ page {
     margin-bottom: 12rpx;
     line-height: 1.5;
     font-size: $fs-caption + 2rpx;
+    color: $mute;
+  }
+}
+
+.lessons {
+  white-space: nowrap;
+  padding-left: $page-x;
+  box-sizing: border-box;
+}
+
+.lesson {
+  display: inline-block;
+  width: 280rpx;
+  margin-right: $gap;
+  vertical-align: top;
+  white-space: normal;
+
+  &:last-child {
+    margin-right: $page-x;
+  }
+
+  &__cover {
+    height: 200rpx;
+    border-radius: $r-inner;
+    box-shadow: $shadow-card;
+  }
+
+  &__title {
+    margin-top: 16rpx;
+    font-size: $fs-small;
+    color: $ink;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  &__sub {
+    margin-top: 4rpx;
+    font-size: $fs-caption;
     color: $mute;
   }
 }

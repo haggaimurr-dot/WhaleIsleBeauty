@@ -141,6 +141,12 @@
       <view class="menu__row" hover-class="menu__row--hover" @tap="openSkinProfile">
         我的肤质档案<text class="menu__hint">{{ me?.skinProfile ?? '还没填写' }}</text>
       </view>
+      <view class="menu__row" hover-class="menu__row--hover" @tap="openCourses">
+        课堂<text class="menu__hint">在家跟着学</text>
+      </view>
+      <view v-if="me?.teacherId" class="menu__row" hover-class="menu__row--hover" @tap="openTeaching">
+        我的课堂<text class="menu__hint">我录的课和分成</text>
+      </view>
       <view class="menu__row" hover-class="menu__row--hover" @tap="callShop">
         联系门店<text class="menu__hint">{{ shop?.openHours }}</text>
       </view>
@@ -321,6 +327,8 @@ function navigate() {
 // ---------- 菜单 ----------
 
 const openSkinProfile = () => uni.navigateTo({ url: '/pages/me/skin' })
+const openCourses = () => uni.navigateTo({ url: '/pages/course/index' })
+const openTeaching = () => uni.navigateTo({ url: '/pages/me/teaching' })
 
 function callShop() {
   if (shop.value) uni.makePhoneCall({ phoneNumber: shop.value.phone })

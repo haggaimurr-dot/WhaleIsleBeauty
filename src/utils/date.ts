@@ -65,3 +65,20 @@ export const dayOfMonth = (date: DateStr) => parse(date).getDate()
 export function hoursUntil(date: DateStr, time: TimeStr): number {
   return (parse(date, time).getTime() - Date.now()) / 3_600_000
 }
+
+/** 视频时长、播放位置：'4:05'，一小时以上 '1:02:05' */
+export function formatPlayTime(sec: number): string {
+  const s = Math.max(0, Math.floor(sec))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`
+}
+
+/** 课程总时长：'约 20 分钟'，不到 1 分钟按 1 分钟算 */
+export const formatCourseMinutes = (sec: number) => `约 ${Math.max(1, Math.round(sec / 60))} 分钟`
+
+/** 'YYYY-MM' → '9 月'，不是今年的带上年份：'2025 年 12 月' */
+export function formatMonth(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  return y === new Date().getFullYear() ? `${m} 月` : `${y} 年 ${m} 月`
+}
