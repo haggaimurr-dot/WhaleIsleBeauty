@@ -65,6 +65,8 @@ type Me struct {
 	Role        string `json:"role"`
 	VisitCount  int    `json:"visitCount"`
 	SkinProfile string `json:"skinProfile,omitempty"`
+	// TeacherID 接受过讲师邀请才有（结束合作后也保留）
+	TeacherID string `json:"teacherId,omitempty"`
 }
 
 type SkinProfile struct {
@@ -118,6 +120,8 @@ type CreateBookingReq struct {
 	Occasion  string `json:"occasion"`
 	SkinType  string `json:"skinType"`
 	Note      string `json:"note"`
+	// CourseID 客人从哪门课点“预约同款”进来的；课不存在或已下架时忽略
+	CourseID string `json:"courseId"`
 }
 
 type WxPayParams struct {
@@ -164,6 +168,8 @@ type OwnerBookingBrief struct {
 	CanChange bool `json:"canChange"`
 	// CanMarkNoShow 店主能标记客人没来：已确认或已完成、开始时间已过、还是预约当天
 	CanMarkNoShow bool `json:"canMarkNoShow"`
+	// CourseTitle 客人是从这门课点进来约的（下单时的课名）
+	CourseTitle string `json:"courseTitle,omitempty"`
 }
 
 type ScheduleCell struct {
@@ -251,4 +257,158 @@ type MonthStats struct {
 	Deposit   int    `json:"deposit"`
 	Customers int    `json:"customers"`
 	Returning int    `json:"returning"`
+}
+
+// ---------- 课堂（口径见 src/api/types.ts 的“课堂”一节） ----------
+
+// TeacherAgreementVersion 讲师授权说明的版本，和 TEACHER_AGREEMENT_VERSION 一致
+const TeacherAgreementVersion = "2026-10"
+
+const (
+	TeacherInvited = "invited"
+	TeacherActive  = "active"
+	TeacherEnded   = "ended"
+
+	PayoutOpen = "open"
+	PayoutDue  = "due"
+	PayoutPaid = "paid"
+)
+
+type CourseTeacher struct {
+	Kind   string `json:"kind"` // artist | customer
+	Name   string `json:"name"`
+	Avatar string `json:"avatar"`
+	Intro  string `json:"intro,omitempty"`
+}
+
+// Lesson 一节。提交时 ID 为空表示新加的
+type Lesson struct {
+	ID          string   `json:"id,omitempty"`
+	Title       string   `json:"title"`
+	Video       string   `json:"video"`
+	DurationSec int      `json:"durationSec"`
+	ProductIDs  []string `json:"productIds"`
+}
+
+type Chapter struct {
+	Title   string   `json:"title"`
+	Lessons []Lesson `json:"lessons"`
+}
+
+// CourseProduct 课里用到的化妆品：店里清单里的一件 + 讲师写的用法
+type CourseProduct struct {
+	Product
+	Tip string `json:"tip,omitempty"`
+}
+
+type CourseSummary struct {
+	ID          string        `json:"id"`
+	Title       string        `json:"title"`
+	Summary     string        `json:"summary"`
+	Category    string        `json:"category"`
+	Cover       string        `json:"cover"`
+	Teacher     CourseTeacher `json:"teacher"`
+	ArtistID    string        `json:"artistId,omitempty"`
+	TeacherID   string        `json:"teacherId,omitempty"`
+	LessonCount int           `json:"lessonCount"`
+	DurationSec int           `json:"durationSec"`
+	Hidden      bool          `json:"hidden,omitempty"`
+}
+
+type CourseProgress struct {
+	LessonID          string   `json:"lessonId"`
+	PositionSec       int      `json:"positionSec"`
+	FinishedLessonIDs []string `json:"finishedLessonIds"`
+	UpdatedAt         string   `json:"updatedAt"`
+}
+
+type Course struct {
+	CourseSummary
+	ServiceID string          `json:"serviceId,omitempty"`
+	Chapters  []Chapter       `json:"chapters"`
+	Products  []CourseProduct `json:"products"`
+	Progress  *CourseProgress `json:"progress,omitempty"`
+}
+
+type CourseProductRef struct {
+	ProductID string `json:"productId"`
+	Tip       string `json:"tip,omitempty"`
+}
+
+// CourseInput 新建、修改课程时提交的内容；存到 catalog 表里的也是它（小节都带上 id）
+type CourseInput struct {
+	Title     string             `json:"title"`
+	Summary   string             `json:"summary"`
+	Category  string             `json:"category"`
+	Cover     string             `json:"cover"`
+	ArtistID  string             `json:"artistId,omitempty"`
+	TeacherID string             `json:"teacherId,omitempty"`
+	ServiceID string             `json:"serviceId,omitempty"`
+	Chapters  []Chapter          `json:"chapters"`
+	Products  []CourseProductRef `json:"products"`
+	Hidden    bool               `json:"hidden,omitempty"`
+}
+
+type SaveProgressReq struct {
+	LessonID    string  `json:"lessonId"`
+	PositionSec float64 `json:"positionSec"`
+}
+
+type Teacher struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Avatar           string `json:"avatar"`
+	Intro            string `json:"intro,omitempty"`
+	ShareRate        int    `json:"shareRate"`
+	Status           string `json:"status"`
+	InviteCode       string `json:"inviteCode,omitempty"`
+	AgreedAt         string `json:"agreedAt,omitempty"`
+	AgreementVersion string `json:"agreementVersion,omitempty"`
+	EndedAt          string `json:"endedAt,omitempty"`
+}
+
+type TeacherInput struct {
+	Name      string `json:"name"`
+	Avatar    string `json:"avatar"`
+	Intro     string `json:"intro,omitempty"`
+	ShareRate int    `json:"shareRate"`
+}
+
+type TeacherInvite struct {
+	Code             string `json:"code"`
+	Name             string `json:"name"`
+	ShareRate        int    `json:"shareRate"`
+	ShopName         string `json:"shopName"`
+	AgreementVersion string `json:"agreementVersion"`
+}
+
+type AcceptInviteReq struct {
+	AgreementVersion string `json:"agreementVersion"`
+}
+
+type ShareRecord struct {
+	BookingID   string `json:"bookingId"`
+	Date        string `json:"date"`
+	ServiceName string `json:"serviceName"`
+	CourseTitle string `json:"courseTitle"`
+	Price       int    `json:"price"`
+	Rate        int    `json:"rate"`
+	Amount      int    `json:"amount"`
+}
+
+type Payout struct {
+	TeacherID   string        `json:"teacherId"`
+	TeacherName string        `json:"teacherName"`
+	Month       string        `json:"month"`
+	Status      string        `json:"status"`
+	Count       int           `json:"count"`
+	Amount      int           `json:"amount"`
+	PaidAt      string        `json:"paidAt,omitempty"`
+	Records     []ShareRecord `json:"records"`
+}
+
+type MyTeaching struct {
+	Teacher Teacher         `json:"teacher"`
+	Courses []CourseSummary `json:"courses"`
+	Payouts []Payout        `json:"payouts"`
 }

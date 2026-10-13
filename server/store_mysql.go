@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -202,14 +203,16 @@ func (s *mysqlStore) CountCompleted(ctx context.Context, userID string) (int, er
 // ---------- 预约 ----------
 
 const bookingCols = `id, user_id, service_id, service_name, artist_id, artist_name, date, time, start_at, end_at,
-  duration_min, price, deposit, status, occasion, skin_type, note, created_at, pay_deadline, paid_at, refund_requested_at, refunded_at, cancel_reason`
+  duration_min, price, deposit, status, occasion, skin_type, note, created_at, pay_deadline, paid_at, refund_requested_at, refunded_at, cancel_reason,
+  course_id, course_title, teacher_id, share_rate`
 
 func scanBooking(sc interface{ Scan(...any) error }) (*BookingRow, error) {
 	var b BookingRow
 	var deadline, paid, refundReq, refunded sql.NullTime
 	if err := sc.Scan(&b.ID, &b.UserID, &b.ServiceID, &b.ServiceName, &b.ArtistID, &b.ArtistName, &b.Date, &b.Time,
 		&b.StartAt, &b.EndAt, &b.DurationMin, &b.Price, &b.Deposit, &b.Status, &b.Occasion, &b.SkinType, &b.Note,
-		&b.CreatedAt, &deadline, &paid, &refundReq, &refunded, &b.CancelReason); err != nil {
+		&b.CreatedAt, &deadline, &paid, &refundReq, &refunded, &b.CancelReason,
+		&b.CourseID, &b.CourseTitle, &b.TeacherID, &b.ShareRate); err != nil {
 		return nil, err
 	}
 	b.PayDeadline, b.PaidAt, b.RefundRequestedAt, b.RefundedAt = timePtr(deadline), timePtr(paid), timePtr(refundReq), timePtr(refunded)
@@ -235,10 +238,11 @@ func (s *mysqlStore) queryBookings(ctx context.Context, where string, args ...an
 
 func (s *mysqlStore) InsertBooking(ctx context.Context, b *BookingRow) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO bookings (`+bookingCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ID, b.UserID, b.ServiceID, b.ServiceName, b.ArtistID, b.ArtistName, b.Date, b.Time,
 		b.StartAt.UTC(), b.EndAt.UTC(), b.DurationMin, b.Price, b.Deposit, b.Status, b.Occasion, b.SkinType, b.Note,
-		b.CreatedAt.UTC(), nullTime(b.PayDeadline), nullTime(b.PaidAt), nullTime(b.RefundRequestedAt), nullTime(b.RefundedAt), b.CancelReason)
+		b.CreatedAt.UTC(), nullTime(b.PayDeadline), nullTime(b.PaidAt), nullTime(b.RefundRequestedAt), nullTime(b.RefundedAt), b.CancelReason,
+		b.CourseID, b.CourseTitle, b.TeacherID, b.ShareRate)
 	if isDuplicate(err) {
 		return ErrSlotTaken
 	}
@@ -502,4 +506,116 @@ func (s *mysqlStore) ActiveBookingExists(ctx context.Context, artistID, serviceI
 		`SELECT COUNT(*) FROM bookings WHERE `+col+` = ? AND status IN (`+placeholders(len(activeStatuses))+`)`,
 		append([]any{id}, toArgs(activeStatuses)...)...).Scan(&n)
 	return n > 0, err
+}
+
+// ---------- 课堂 ----------
+
+func (s *mysqlStore) ShareBookings(ctx context.Context, from, to string) ([]*BookingRow, error) {
+	return s.queryBookings(ctx, `teacher_id <> '' AND date >= ? AND date < ? AND status = ?`, from, to, StatusCompleted)
+}
+
+func (s *mysqlStore) CourseProgress(ctx context.Context, userID, courseID string) (*ProgressRow, error) {
+	var p ProgressRow
+	var finished []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT lesson_id, position_sec, finished, updated_at FROM course_progress WHERE user_id = ? AND course_id = ?`,
+		userID, courseID).Scan(&p.LessonID, &p.PositionSec, &finished, &p.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(finished, &p.Finished); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *mysqlStore) SaveCourseProgress(ctx context.Context, userID, courseID string, p ProgressRow) error {
+	finished, _ := json.Marshal(p.Finished)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO course_progress (user_id, course_id, lesson_id, position_sec, finished, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE lesson_id = VALUES(lesson_id), position_sec = VALUES(position_sec),
+		   finished = VALUES(finished), updated_at = VALUES(updated_at)`,
+		userID, courseID, p.LessonID, p.PositionSec, finished, p.UpdatedAt.UTC())
+	return err
+}
+
+func (s *mysqlStore) TrimCourseProgress(ctx context.Context, courseID string, keep map[string]bool) error {
+	if keep == nil {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM course_progress WHERE course_id = ?`, courseID)
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id, lesson_id, finished FROM course_progress WHERE course_id = ?`, courseID)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		user, lesson string
+		finished     []string
+	}
+	var all []row
+	for rows.Next() {
+		var r row
+		var raw []byte
+		if err := rows.Scan(&r.user, &r.lesson, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		_ = json.Unmarshal(raw, &r.finished)
+		all = append(all, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range all {
+		if !keep[r.lesson] {
+			if _, err := s.db.ExecContext(ctx, `DELETE FROM course_progress WHERE user_id = ? AND course_id = ?`, r.user, courseID); err != nil {
+				return err
+			}
+			continue
+		}
+		finished, _ := json.Marshal(keepOnly(r.finished, keep))
+		if _, err := s.db.ExecContext(ctx, `UPDATE course_progress SET finished = ? WHERE user_id = ? AND course_id = ?`,
+			finished, r.user, courseID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *mysqlStore) PaidPayouts(ctx context.Context) ([]Payout, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT data FROM teacher_payouts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Payout
+	for rows.Next() {
+		var raw []byte
+		var p Payout
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *mysqlStore) InsertPaidPayout(ctx context.Context, p Payout, paidAt time.Time) error {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO teacher_payouts (teacher_id, month, data, paid_at) VALUES (?, ?, ?, ?)`,
+		p.TeacherID, p.Month, data, paidAt.UTC())
+	if isDuplicate(err) {
+		return ErrStale
+	}
+	return err
 }

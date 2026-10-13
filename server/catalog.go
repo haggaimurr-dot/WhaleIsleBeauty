@@ -40,9 +40,11 @@ type CatalogItem struct {
 type Catalog struct {
 	Shop     Shop
 	Artists  []Artist
-	Services []Service // 含已下架的
-	Works    []Work    // 最新的在前
-	Products []Product // 按加的先后，读的时候再按类别排
+	Services []Service    // 含已下架的
+	Works    []Work       // 最新的在前
+	Products []Product    // 按加的先后，读的时候再按类别排
+	Courses  []courseRec  // 最新的在前（courses.go）
+	Teachers []teacherRec // 先加的在前
 }
 
 func (c *Catalog) artist(id string) *Artist {
@@ -97,14 +99,14 @@ func buildCatalog(items []CatalogItem) (*Catalog, error) {
 			return a.Kind < b.Kind
 		}
 		if a.Sort != b.Sort {
-			if a.Kind == kindWork {
+			if a.Kind == kindWork || a.Kind == kindCourse {
 				return a.Sort > b.Sort
 			}
 			return a.Sort < b.Sort
 		}
 		return a.ID < b.ID
 	})
-	c := &Catalog{Artists: []Artist{}, Services: []Service{}, Works: []Work{}, Products: []Product{}}
+	c := &Catalog{Artists: []Artist{}, Services: []Service{}, Works: []Work{}, Products: []Product{}, Courses: []courseRec{}, Teachers: []teacherRec{}}
 	for _, it := range sorted {
 		var err error
 		switch it.Kind {
@@ -130,6 +132,16 @@ func buildCatalog(items []CatalogItem) (*Catalog, error) {
 			err = json.Unmarshal(it.Data, &v)
 			v.ID = it.ID
 			c.Products = append(c.Products, v)
+		case kindCourse:
+			var v courseRec
+			err = json.Unmarshal(it.Data, &v.CourseInput)
+			v.ID = it.ID
+			c.Courses = append(c.Courses, v)
+		case kindTeacher:
+			var v teacherRec
+			err = json.Unmarshal(it.Data, &v)
+			v.ID = it.ID
+			c.Teachers = append(c.Teachers, v)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("catalog %s/%s: %w", it.Kind, it.ID, err)
@@ -514,6 +526,15 @@ func (a *App) DeleteArtist(ctx context.Context, u *User, id string) error {
 	if n > 0 {
 		return apiErr("INVALID_STATE", fmt.Sprintf("TA 名下还有 %d 个作品，先改给别人或删掉", n))
 	}
+	n = 0
+	for _, r := range c.Courses {
+		if r.ArtistID == id {
+			n++
+		}
+	}
+	if n > 0 {
+		return apiErr("INVALID_STATE", fmt.Sprintf("TA 名下还有 %d 门课，先改给别人或删掉", n))
+	}
 	if len(c.Artists) == 1 {
 		return apiErr("INVALID_STATE", "至少要留一位化妆师")
 	}
@@ -573,7 +594,7 @@ func (a *App) UpdateService(ctx context.Context, u *User, id string, req Service
 	return v, a.put(ctx, kindService, id, v)
 }
 
-// DeleteService 删掉后关联它的作品不再带 serviceId
+// DeleteService 删掉后关联它的作品和课程不再带 serviceId
 func (a *App) DeleteService(ctx context.Context, u *User, id string) error {
 	c, err := a.ownerCatalog(ctx, u)
 	if err != nil {
@@ -599,6 +620,14 @@ func (a *App) DeleteService(ctx context.Context, u *User, id string) error {
 		if w.ServiceID == id {
 			w.ServiceID = ""
 			if err := a.store.PutCatalogItem(ctx, item(kindWork, w.ID, 0, w)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, r := range c.Courses {
+		if r.ServiceID == id {
+			r.ServiceID = ""
+			if err := a.store.PutCatalogItem(ctx, item(kindCourse, r.ID, 0, r.CourseInput)); err != nil {
 				return err
 			}
 		}
@@ -706,9 +735,44 @@ func (a *App) UpdateProduct(ctx context.Context, u *User, id string, req Product
 	return a.saveProduct(ctx, u, id, req, false)
 }
 
+// DeleteProduct 课程里用到它的地方一起去掉
 func (a *App) DeleteProduct(ctx context.Context, u *User, id string) error {
-	if _, err := a.ownerCatalog(ctx, u); err != nil {
+	c, err := a.ownerCatalog(ctx, u)
+	if err != nil {
 		return err
 	}
-	return a.remove(ctx, kindProduct, id)
+	if err := a.remove(ctx, kindProduct, id); err != nil {
+		return err
+	}
+	for _, r := range c.Courses {
+		changed := false
+		products := []CourseProductRef{}
+		for _, p := range r.Products {
+			if p.ProductID == id {
+				changed = true
+			} else {
+				products = append(products, p)
+			}
+		}
+		if !changed {
+			continue
+		}
+		r.Products = products
+		for ci := range r.Chapters {
+			for li := range r.Chapters[ci].Lessons {
+				l := &r.Chapters[ci].Lessons[li]
+				ids := []string{}
+				for _, x := range l.ProductIDs {
+					if x != id {
+						ids = append(ids, x)
+					}
+				}
+				l.ProductIDs = ids
+			}
+		}
+		if err := a.store.PutCatalogItem(ctx, item(kindCourse, r.ID, 0, r.CourseInput)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

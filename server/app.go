@@ -291,7 +291,15 @@ func (a *App) Me(ctx context.Context, u *User) (Me, error) {
 	if a.owners[u.OpenID] {
 		role = "owner"
 	}
-	return Me{ID: u.ID, Nickname: u.Nickname, Avatar: u.Avatar, Role: role, VisitCount: n, SkinProfile: skinSummary(u.Skin)}, nil
+	m := Me{ID: u.ID, Nickname: u.Nickname, Avatar: u.Avatar, Role: role, VisitCount: n, SkinProfile: skinSummary(u.Skin)}
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return Me{}, err
+	}
+	if t := c.myTeacher(u.ID); t != nil {
+		m.TeacherID = t.ID
+	}
+	return m, nil
 }
 
 func (a *App) UpdateSkinProfile(ctx context.Context, u *User, req SkinProfile) (SkinProfile, error) {
@@ -459,6 +467,9 @@ func (a *App) CreateBooking(ctx context.Context, u *User, req CreateBookingReq) 
 		DurationMin: svc.DurationMin, Price: svc.Price, Deposit: svc.Deposit,
 		Status: StatusPendingPayment, Occasion: req.Occasion, SkinType: req.SkinType, Note: note,
 		CreatedAt: now, PayDeadline: &deadline,
+	}
+	if req.CourseID != "" {
+		attribute(c, u, b, req.CourseID)
 	}
 	if err := a.store.InsertBooking(ctx, b); err != nil {
 		if errors.Is(err, ErrSlotTaken) {
@@ -714,6 +725,7 @@ func (a *App) DaySchedule(ctx context.Context, u *User, date string) (DaySchedul
 					CanConfirm:  b.Status == StatusPendingConfirm && !a.isPast(b.Date, b.Time),
 					DurationMin: b.DurationMin, Occasion: b.Occasion, SkinType: b.SkinType,
 					CanChange: a.ownerCanChange(b), CanMarkNoShow: a.canMarkNoShow(b),
+					CourseTitle: b.CourseTitle,
 				}
 				if hasProfile(customer.Skin) {
 					p := customer.Skin

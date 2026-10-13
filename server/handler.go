@@ -144,6 +144,23 @@ func (a *App) Routes() http.Handler {
 		v, err := a.Products(r.Context(), r.URL.Query().Get("category"))
 		reply(w, r, v, err)
 	})
+	pub("GET /v1/courses", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Courses(r.Context(), r.URL.Query().Get("category"))
+		reply(w, r, v, err)
+	})
+	// 课程详情也是公开的；带了 openid（不是朋友圈单页模式）就附上这位客人的进度，没注册过的不新建
+	pub("GET /v1/courses/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var u *User
+		if openid := strings.TrimSpace(r.Header.Get("X-WX-OPENID")); openid != "" {
+			var err error
+			if u, err = a.store.UserByOpenID(r.Context(), openid); err != nil {
+				writeErr(w, r, err)
+				return
+			}
+		}
+		v, err := a.Course(r.Context(), u, r.PathValue("id"))
+		reply(w, r, v, err)
+	})
 
 	// ---------- 客人端预约 ----------
 	h("GET /v1/slots", func(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +177,13 @@ func (a *App) Routes() http.Handler {
 		v, err := a.CreateBooking(r.Context(), userOf(r), req)
 		reply(w, r, v, err)
 	})
+	// ---------- 课堂（客人端） ----------
+	h("PUT /v1/courses/{id}/progress", bodyID(a.SaveCourseProgress))
+	h("GET /v1/teacher-invites/{id}", byID(a.TeacherInvite))
+	h("POST /v1/teacher-invites/{id}/accept", bodyID(a.AcceptTeacherInvite))
+	h("GET /v1/me/teaching", list(a.MyTeaching))
+	h("POST /v1/me/teaching/quit", list(a.QuitTeaching))
+
 	h("GET /v1/bookings/mine", func(w http.ResponseWriter, r *http.Request) {
 		v, err := a.ListMyBookings(r.Context(), userOf(r), r.URL.Query().Get("scope"))
 		reply(w, r, v, err)
@@ -249,6 +273,23 @@ func (a *App) Routes() http.Handler {
 	h("PUT /v1/owner/products/{id}", bodyID(a.UpdateProduct))
 	h("DELETE /v1/owner/products/{id}", del(a.DeleteProduct))
 
+	// ---------- 课堂（店主端） ----------
+	h("GET /v1/owner/courses", list(a.OwnerCourses))
+	h("GET /v1/owner/courses/{id}", byID(a.OwnerCourse))
+	h("POST /v1/owner/courses", body(a.CreateCourse))
+	h("PUT /v1/owner/courses/{id}", bodyID(a.UpdateCourse))
+	h("DELETE /v1/owner/courses/{id}", del(a.DeleteCourse))
+	h("GET /v1/owner/teachers", list(a.Teachers))
+	h("POST /v1/owner/teachers", body(a.CreateTeacher))
+	h("PUT /v1/owner/teachers/{id}", bodyID(a.UpdateTeacher))
+	h("POST /v1/owner/teachers/{id}/end", byID(a.EndTeacher))
+	h("DELETE /v1/owner/teachers/{id}", del(a.DeleteTeacher))
+	h("GET /v1/owner/payouts", list(a.Payouts))
+	h("POST /v1/owner/payouts/{teacherId}/{month}/paid", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.MarkPayoutPaid(r.Context(), userOf(r), r.PathValue("teacherId"), r.PathValue("month"))
+		reply(w, r, v, err)
+	})
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, r, errNotFound) })
 	return mux
 }
@@ -282,6 +323,13 @@ func bodyID[Req, T any](f func(context.Context, *User, string, Req) (T, error)) 
 			return
 		}
 		v, err := f(r.Context(), userOf(r), r.PathValue("id"), req)
+		reply(w, r, v, err)
+	}
+}
+
+func byID[T any](f func(context.Context, *User, string) (T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		v, err := f(r.Context(), userOf(r), r.PathValue("id"))
 		reply(w, r, v, err)
 	}
 }

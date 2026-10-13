@@ -54,6 +54,19 @@ type BookingRow struct {
 	RefundRequestedAt *time.Time
 	RefundedAt        *time.Time
 	CancelReason      string
+	// 从哪门课来的（下单时的课名）；TeacherID、ShareRate 只在讲师是顾客讲师、能分成时才有
+	CourseID    string
+	CourseTitle string
+	TeacherID   string
+	ShareRate   int
+}
+
+// ProgressRow 一位客人在一门课上的观看进度
+type ProgressRow struct {
+	LessonID    string
+	PositionSec int
+	Finished    []string
+	UpdatedAt   time.Time
 }
 
 func slotKey(artistID, date, t string) string { return artistID + "|" + date + "|" + t }
@@ -110,6 +123,18 @@ type Store interface {
 	DeleteCatalogItem(ctx context.Context, kind, id string) error
 	// ActiveBookingExists 这位化妆师（或这个项目）还有没有进行中的预约。两个参数只传一个，另一个为空
 	ActiveBookingExists(ctx context.Context, artistID, serviceID string) (bool, error)
+
+	// ShareBookings 到店日期在 [from, to) 里、已经完成、记了讲师分成的预约
+	ShareBookings(ctx context.Context, from, to string) ([]*BookingRow, error)
+	// CourseProgress 没看过返回 nil, nil
+	CourseProgress(ctx context.Context, userID, courseID string) (*ProgressRow, error)
+	SaveCourseProgress(ctx context.Context, userID, courseID string, p ProgressRow) error
+	// TrimCourseProgress 改课后：最近在看的小节不在 keep 里的删掉，看完的只留 keep 里的；keep 为 nil 表示整门课的都删
+	TrimCourseProgress(ctx context.Context, courseID string, keep map[string]bool) error
+	// PaidPayouts 标记过已付的分成
+	PaidPayouts(ctx context.Context) ([]Payout, error)
+	// InsertPaidPayout 已经标记过返回 ErrStale
+	InsertPaidPayout(ctx context.Context, p Payout, paidAt time.Time) error
 }
 
 func onSchedule(b *BookingRow) bool {
@@ -138,12 +163,15 @@ type memStore struct {
 	notices  map[string]string      // noticeKey → 结果，"" 表示正在发
 	quota    map[string]int         // 店主 openid → 提醒额度
 	catalog  map[string]CatalogItem // kind|id
+	progress map[string]ProgressRow // userID|courseID
+	payouts  map[string]Payout      // teacherID|month
 }
 
 func newMemStore() *memStore {
 	s := &memStore{
 		users: map[string]*User{}, bookings: map[string]*BookingRow{}, blocks: map[string]bool{},
 		notices: map[string]string{}, catalog: map[string]CatalogItem{}, quota: map[string]int{},
+		progress: map[string]ProgressRow{}, payouts: map[string]Payout{},
 	}
 	for _, it := range seedCatalogItems() {
 		s.catalog[it.Kind+"|"+it.ID] = it
@@ -429,4 +457,80 @@ func (s *memStore) ActiveBookingExists(_ context.Context, artistID, serviceID st
 		}
 	}
 	return false, nil
+}
+
+func (s *memStore) ShareBookings(_ context.Context, from, to string) ([]*BookingRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.filter(func(b *BookingRow) bool {
+		return b.Status == StatusCompleted && b.TeacherID != "" && b.Date >= from && b.Date < to
+	}), nil
+}
+
+func (s *memStore) CourseProgress(_ context.Context, userID, courseID string) (*ProgressRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.progress[userID+"|"+courseID]
+	if !ok {
+		return nil, nil
+	}
+	p.Finished = append([]string{}, p.Finished...)
+	return &p, nil
+}
+
+func (s *memStore) SaveCourseProgress(_ context.Context, userID, courseID string, p ProgressRow) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p.Finished = append([]string{}, p.Finished...)
+	s.progress[userID+"|"+courseID] = p
+	return nil
+}
+
+func (s *memStore) TrimCourseProgress(_ context.Context, courseID string, keep map[string]bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, p := range s.progress {
+		if !strings.HasSuffix(k, "|"+courseID) {
+			continue
+		}
+		if keep == nil || !keep[p.LessonID] {
+			delete(s.progress, k)
+			continue
+		}
+		p.Finished = keepOnly(p.Finished, keep)
+		s.progress[k] = p
+	}
+	return nil
+}
+
+// keepOnly 只留 keep 里有的，结果不为 nil
+func keepOnly(list []string, keep map[string]bool) []string {
+	out := []string{}
+	for _, v := range list {
+		if keep[v] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (s *memStore) PaidPayouts(_ context.Context) ([]Payout, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Payout, 0, len(s.payouts))
+	for _, p := range s.payouts {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (s *memStore) InsertPaidPayout(_ context.Context, p Payout, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := p.TeacherID + "|" + p.Month
+	if _, ok := s.payouts[key]; ok {
+		return ErrStale
+	}
+	s.payouts[key] = p
+	return nil
 }
