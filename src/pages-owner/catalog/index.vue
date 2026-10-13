@@ -1,7 +1,7 @@
 <template>
   <PageLayout>
     <template #header>
-      <view class="psub">客人在小程序里看到的门店信息、化妆师、项目、作品和化妆品都在这里改。改了马上生效，已经下的单不受影响。</view>
+      <view class="psub">客人在小程序里看到的门店信息、化妆师、项目、作品、化妆品和课程都在这里改。改了马上生效，已经下的单不受影响。</view>
     </template>
 
     <view v-if="status === 'error'" class="panel">
@@ -51,6 +51,31 @@
           <text class="menu__hint">{{ products.length }} 件</text>
         </view>
       </view>
+
+      <view class="h">课堂</view>
+      <view class="menu">
+        <view class="menu__row" hover-class="menu__row--hover" @tap="go('courses')">
+          <view class="menu__main">
+            课程
+            <view class="menu__sub">{{ courseSub }}</view>
+          </view>
+          <text class="menu__hint">{{ courses.length }} 门</text>
+        </view>
+        <view class="menu__row" hover-class="menu__row--hover" @tap="go('teachers')">
+          <view class="menu__main">
+            讲师
+            <view class="menu__sub">{{ teacherSub }}</view>
+          </view>
+          <text class="menu__hint">{{ teachers.length }} 位</text>
+        </view>
+        <view class="menu__row" hover-class="menu__row--hover" @tap="go('payouts')">
+          <view class="menu__main">
+            讲师分成
+            <view class="menu__sub">{{ payoutSub }}</view>
+          </view>
+          <text class="menu__hint">{{ dueTotal ? formatPrice(dueTotal) : '' }}</text>
+        </view>
+      </view>
     </template>
   </PageLayout>
 </template>
@@ -60,8 +85,9 @@ import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import {
   api, errorText, ApiError, PRODUCT_CATEGORY_LABEL,
-  type Artist, type Product, type ProductCategory, type Service, type Shop, type Work,
+  type Artist, type CourseSummary, type Payout, type Product, type ProductCategory, type Service, type Shop, type Teacher, type Work,
 } from '@/api'
+import { formatPrice } from '@/utils/money'
 import AppButton from '@/components/AppButton.vue'
 import PageLayout from '@/components/PageLayout.vue'
 
@@ -92,6 +118,22 @@ const productSub = computed(() => {
     .join(' · ')
 })
 
+const courses = ref<CourseSummary[]>([])
+const courseSub = computed(() => {
+  if (!courses.value.length) return '还没有，录几节小课带客人来'
+  const hidden = courses.value.filter(c => c.hidden).length
+  return hidden ? `${courses.value.length - hidden} 门在架上，${hidden} 门下架了` : '都在架上'
+})
+const teachers = ref<Teacher[]>([])
+const teacherSub = computed(() => {
+  const n = (s: Teacher['status']) => teachers.value.filter(t => t.status === s).length
+  if (!teachers.value.length) return '请常来的客人录课，按带来的预约分成'
+  return [n('active') && `${n('active')} 位合作中`, n('invited') && `${n('invited')} 位等确认`].filter(Boolean).join('，') || '都结束合作了'
+})
+const payouts = ref<Payout[]>([])
+const dueTotal = computed(() => payouts.value.filter(p => p.status === 'due').reduce((n, p) => n + p.amount, 0))
+const payoutSub = computed(() => dueTotal.value ? '有待付的分成，打完款记得标记' : '没有待付的')
+
 async function load() {
   // 已经有数据时（从编辑页返回）不清空，避免闪一下
   if (!shop.value) status.value = 'loading'
@@ -101,6 +143,10 @@ async function load() {
     if (me.role !== 'owner') throw new ApiError('FORBIDDEN', '')
     ;[shop.value, artists.value, services.value, works.value, products.value] = await Promise.all([
       api.getShop(), api.listArtists(), api.listOwnerServices(), api.listOwnerWorks(), api.listProducts(),
+    ])
+    // 课堂这一块取不到不影响改别的资料
+    ;[courses.value, teachers.value, payouts.value] = await Promise.all([
+      api.listOwnerCourses().catch(() => []), api.listTeachers().catch(() => []), api.listPayouts().catch(() => []),
     ])
     status.value = 'ok'
   } catch (e) {
@@ -117,6 +163,7 @@ const openArtists = () => uni.navigateTo({ url: '/pages-owner/catalog/artists' }
 const openServices = () => uni.navigateTo({ url: '/pages-owner/catalog/services' })
 const openWorks = () => uni.navigateTo({ url: '/pages-owner/catalog/works' })
 const openProducts = () => uni.navigateTo({ url: '/pages-owner/catalog/products' })
+const go = (page: 'courses' | 'teachers' | 'payouts') => uni.navigateTo({ url: `/pages-owner/catalog/${page}` })
 </script>
 
 <style lang="scss">

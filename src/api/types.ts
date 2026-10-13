@@ -447,6 +447,10 @@ export interface CourseSummary {
   category: StyleCategory
   cover: string
   teacher: CourseTeacher
+  /** 二选一：化妆师自己录的 */
+  artistId?: ID
+  /** 二选一：顾客讲师录的 */
+  teacherId?: ID
   lessonCount: number
   /** 所有小节加起来，秒 */
   durationSec: number
@@ -466,10 +470,6 @@ export interface CourseProgress {
 }
 
 export interface Course extends CourseSummary {
-  /** 二选一：化妆师自己录的 */
-  artistId?: ID
-  /** 二选一：顾客讲师录的 */
-  teacherId?: ID
   /** “预约同款”预选的项目。客人端在项目下架时不返回 */
   serviceId?: ID
   chapters: Chapter[]

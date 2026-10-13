@@ -115,6 +115,9 @@
           <view class="detail__row">
             <text class="detail__k">这次肤质</text>{{ detail.booking.skinType ? SKIN_LABEL[detail.booking.skinType] : '没选' }}
           </view>
+          <view v-if="detail.booking.courseTitle" class="detail__row">
+            <text class="detail__k">从课程来</text>《{{ detail.booking.courseTitle }}》
+          </view>
         </view>
 
         <view v-if="detail.booking.alert || detail.booking.note" class="detail__alert">

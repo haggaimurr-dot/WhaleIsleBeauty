@@ -494,6 +494,7 @@ function courseSummary(c: CourseRec): CourseSummary {
   const lessons = lessonsOf(c)
   return {
     id: c.id, title: c.title, summary: c.summary, category: c.category, cover: c.cover, teacher: courseTeacher(c),
+    ...(c.artistId && { artistId: c.artistId }), ...(c.teacherId && { teacherId: c.teacherId }),
     lessonCount: lessons.length, durationSec: lessons.reduce((n, l) => n + l.durationSec, 0),
     ...(c.hidden && { hidden: true }),
   }
@@ -508,8 +509,6 @@ function courseDetail(c: CourseRec, forOwner: boolean): Course {
       return product ? [{ ...clone(product), ...(p.tip && { tip: p.tip }) }] : []
     }),
   }
-  if (c.artistId) d.artistId = c.artistId
-  if (c.teacherId) d.teacherId = c.teacherId
   // 和作品一样：项目下架了客人那边就不预选
   if (c.serviceId && (forOwner || !services.find(s => s.id === c.serviceId)?.hidden)) d.serviceId = c.serviceId
   const p = progress.get(c.id)
