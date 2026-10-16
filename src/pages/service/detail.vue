@@ -34,6 +34,13 @@
           <view class="box__title">包含</view>
           <view v-for="item in service.includes" :key="item" class="box__li">{{ item }}</view>
         </view>
+        <view v-if="service.steps?.length" class="box">
+          <view class="box__title">到店流程</view>
+          <view v-for="(step, i) in service.steps" :key="i" class="box__step">
+            <text class="box__no">{{ i + 1 }}</text>
+            <text>{{ step }}</text>
+          </view>
+        </view>
         <view class="box">
           <view class="box__title">使用的产品</view>
           <view class="box__text">{{ PRODUCTS_TEXT }}</view>
@@ -241,6 +248,21 @@ const toHome = () => switchTab('home')
     font-size: $fs-small;
     line-height: 1.9;
     color: $ink;
+  }
+
+  &__step {
+    display: flex;
+    gap: 16rpx;
+    font-size: $fs-small;
+    line-height: 1.9;
+    color: $ink;
+  }
+
+  &__no {
+    flex: none;
+    width: 28rpx;
+    font-family: $font-serif;
+    color: $mocha;
   }
 
   &__li {

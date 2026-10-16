@@ -1,7 +1,7 @@
 <template>
   <PageLayout>
     <template #header>
-      <view class="psub">客人在“作品”里按这个顺序看到，新加的排在最前。</view>
+      <view class="psub">客人在“作品”里按这个顺序看到，新加的排在最前。标了“首页轮播”的放在首页轮播。</view>
     </template>
 
     <view v-if="status === 'error'" class="panel">
@@ -20,6 +20,7 @@
           <view class="row__name">
             <text class="row__title">{{ w.title }}</text>
             <text class="row__badge">{{ CATEGORY_LABEL[w.category] }}</text>
+            <text v-if="w.featured" class="row__badge">首页轮播</text>
           </view>
           <view class="row__desc">化妆师 {{ artistName(w.artistId) }}　{{ w.durationText }}</view>
           <view class="row__desc">{{ serviceText(w) }}</view>

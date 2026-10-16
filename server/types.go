@@ -21,6 +21,8 @@ type Service struct {
 	PriceFrom   bool     `json:"priceFrom,omitempty"`
 	Deposit     int      `json:"deposit"`
 	Includes    []string `json:"includes"`
+	// Steps 到店流程，一步一句，按先后排；没填时不带
+	Steps       []string `json:"steps,omitempty"`
 	Tags        []string `json:"tags"`
 	Cover       string   `json:"cover"`
 	Images      []string `json:"images"`
@@ -38,6 +40,8 @@ type Work struct {
 	Image        string  `json:"image"`
 	Ratio        float64 `json:"ratio"`
 	DurationText string  `json:"durationText"`
+	// Featured 放在首页轮播，最多 limFeaturedWorks 张；只存 true
+	Featured bool `json:"featured,omitempty"`
 }
 
 // Product 店里用的化妆品

@@ -71,6 +71,21 @@
         />
       </view>
 
+      <view class="h">到店流程<text class="h__opt">一行写一步，最多 {{ LIMITS.steps }} 步，可以不填</text></view>
+      <view class="pad">
+        <textarea
+          v-model="form.steps"
+          class="note"
+          placeholder="比如：先卸妆洁面，按肤质做妆前护肤（换行写下一步）"
+          placeholder-class="field__ph"
+          auto-height
+          disable-default-padding
+          :maxlength="500"
+          :cursor-spacing="120"
+        />
+      </view>
+      <view class="hint">客人在首页点项目卡片上的“看流程”能展开看，详情页也会显示。</view>
+
       <view class="h">标签<text class="h__opt">一行写一个，最多 {{ LIMITS.tags }} 个</text></view>
       <view class="pad">
         <textarea
@@ -135,11 +150,11 @@ const errorMsg = ref('')
 interface Form {
   name: string; summary: string; category?: StyleCategory; durationMin: number
   price: string; deposit: string; priceFrom: boolean
-  includes: string; tags: string; images: string[]; hidden: boolean
+  includes: string; steps: string; tags: string; images: string[]; hidden: boolean
 }
 const EMPTY: Form = {
   name: '', summary: '', category: undefined, durationMin: 90,
-  price: '', deposit: '', priceFrom: false, includes: '', tags: '', images: [], hidden: false,
+  price: '', deposit: '', priceFrom: false, includes: '', steps: '', tags: '', images: [], hidden: false,
 }
 const form = reactive<Form>({ ...EMPTY, images: [] })
 const saved = ref<Form>({ ...EMPTY })
@@ -150,7 +165,7 @@ function toInput(f: Form): ServiceInput {
   return cleanService({
     name: f.name, summary: f.summary, category: f.category as StyleCategory, durationMin: f.durationMin,
     price: parseYuan(f.price), deposit: parseYuan(f.deposit), priceFrom: f.priceFrom,
-    includes: splitLines(f.includes), tags: splitLines(f.tags),
+    includes: splitLines(f.includes), steps: splitLines(f.steps), tags: splitLines(f.tags),
     cover: f.images[0] ?? '', images: f.images, hidden: f.hidden,
   })
 }
@@ -159,7 +174,7 @@ function toForm(s: Service): Form {
   return {
     name: s.name, summary: s.summary, category: s.category, durationMin: s.durationMin,
     price: centsToYuanInput(s.price), deposit: centsToYuanInput(s.deposit), priceFrom: !!s.priceFrom,
-    includes: s.includes.join('\n'), tags: s.tags.join('\n'), images: [...s.images], hidden: !!s.hidden,
+    includes: s.includes.join('\n'), steps: (s.steps ?? []).join('\n'), tags: s.tags.join('\n'), images: [...s.images], hidden: !!s.hidden,
   }
 }
 

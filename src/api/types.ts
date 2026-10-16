@@ -47,6 +47,11 @@ export interface Service {
   priceFrom?: boolean
   deposit: Cents
   includes: string[]
+  /**
+   * 到店流程，一步一句，按先后排（例如“先卸妆洁面，按肤质做妆前护肤”）。
+   * 首页项目卡片展开看、详情页也显示。没填时不带这个字段
+   */
+  steps?: string[]
   tags: string[]
   cover: string
   images: string[]
@@ -69,6 +74,11 @@ export interface Work {
   /** 宽高比（高/宽），用于瀑布流占位 */
   ratio: number
   durationText: string
+  /**
+   * 放在首页轮播里，店主挑的妆后图，最多 LIMITS.featuredWorks 张。
+   * 客人首页按作品顺序（最新在前）取；一张都没选时首页取最新的几张。只存 true，不选时不带这个字段
+   */
+  featured?: boolean
 }
 
 /** 门店信息，用于成功页地址、联系门店、到店导航 */

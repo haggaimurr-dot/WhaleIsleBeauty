@@ -68,6 +68,13 @@
         <input v-model="form.durationText" class="field" placeholder="比如 约 90 分钟、需提前沟通" placeholder-class="field__ph" :maxlength="LIMITS.durationText" />
       </view>
 
+      <view class="h">首页轮播</view>
+      <view class="chips">
+        <Chip label="放到首页" :selected="form.featured" @click="form.featured = true" />
+        <Chip label="不放" :selected="!form.featured" @click="form.featured = false" />
+      </view>
+      <view class="hint">放在首页“预约化妆”旁边轮播，最多 {{ LIMITS.featuredWorks }} 张，挑最能代表店里手艺的妆后图。一张都没选时轮播最新的几张。</view>
+
       <view class="pad">
         <view class="policy">放上来的照片要先问过客人本人，同意了再放。客人想撤下，删掉就好。</view>
       </view>
@@ -121,9 +128,9 @@ const services = ref<Service[]>([])
 /** 可选项用空字符串表示没选，提交时再转 */
 interface Form {
   title: string; category?: StyleCategory; artistId: ID; serviceId: ID
-  image: string; ratio: number; durationText: string
+  image: string; ratio: number; durationText: string; featured: boolean
 }
-const EMPTY: Form = { title: '', category: undefined, artistId: '', serviceId: '', image: '', ratio: 1.25, durationText: '' }
+const EMPTY: Form = { title: '', category: undefined, artistId: '', serviceId: '', image: '', ratio: 1.25, durationText: '', featured: false }
 const form = reactive<Form>({ ...EMPTY })
 const saved = ref<Form>({ ...EMPTY })
 
@@ -131,13 +138,14 @@ function toInput(f: Form): WorkInput {
   return cleanWork({
     title: f.title, category: f.category as StyleCategory, artistId: f.artistId,
     serviceId: f.serviceId || undefined, image: f.image, ratio: f.ratio, durationText: f.durationText,
+    featured: f.featured,
   })
 }
 
 function toForm(w: Work): Form {
   return {
     title: w.title, category: w.category, artistId: w.artistId, serviceId: w.serviceId ?? '',
-    image: w.image, ratio: w.ratio, durationText: w.durationText,
+    image: w.image, ratio: w.ratio, durationText: w.durationText, featured: !!w.featured,
   }
 }
 

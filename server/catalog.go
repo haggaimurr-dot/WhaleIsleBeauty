@@ -181,10 +181,13 @@ const (
 	limMaxPrice     = 10_000_000 // 10 万元
 	limIncludes     = 10
 	limIncludeText  = 30
+	limSteps        = 10
+	limStepText     = 40
 	limTags         = 5
 	limTagText      = 10
 	limImages       = 6
 	limWorkTitle    = 20
+	limFeatured     = 6 // 首页轮播最多几张
 	limDurationText = 20
 	limMinRatio     = 0.5
 	limMaxRatio     = 2
@@ -303,7 +306,7 @@ func cleanService(v Service) Service {
 	return Service{
 		Name: strings.TrimSpace(v.Name), Summary: strings.TrimSpace(v.Summary), Category: v.Category,
 		DurationMin: v.DurationMin, Price: v.Price, PriceFrom: v.PriceFrom, Deposit: v.Deposit,
-		Includes: lines(v.Includes), Tags: lines(v.Tags), Cover: cover, Images: images, Hidden: v.Hidden,
+		Includes: lines(v.Includes), Steps: lines(v.Steps), Tags: lines(v.Tags), Cover: cover, Images: images, Hidden: v.Hidden,
 	}
 }
 
@@ -325,6 +328,10 @@ func validateService(v Service) string {
 	for _, s := range v.Includes {
 		add(runes(s) > limIncludeText, fmt.Sprintf("包含内容每条最多 %d 个字", limIncludeText))
 	}
+	add(len(v.Steps) > limSteps, fmt.Sprintf("流程说明最多 %d 步", limSteps))
+	for _, s := range v.Steps {
+		add(runes(s) > limStepText, fmt.Sprintf("流程说明每步最多 %d 个字", limStepText))
+	}
 	add(len(v.Tags) > limTags, fmt.Sprintf("标签最多 %d 个", limTags))
 	for _, s := range v.Tags {
 		add(runes(s) > limTagText, fmt.Sprintf("标签每个最多 %d 个字", limTagText))
@@ -341,6 +348,7 @@ func cleanWork(v Work) Work {
 	return Work{
 		Title: strings.TrimSpace(v.Title), Category: v.Category, ArtistID: v.ArtistID, ServiceID: v.ServiceID,
 		Image: strings.TrimSpace(v.Image), Ratio: v.Ratio, DurationText: strings.TrimSpace(v.DurationText),
+		Featured: v.Featured,
 	}
 }
 
@@ -670,6 +678,17 @@ func (a *App) saveWork(ctx context.Context, u *User, id string, req Work, isNew 
 	}
 	if v.ServiceID != "" && c.service(v.ServiceID) == nil {
 		return Work{}, badRequest("关联的项目不在了，换一个吧")
+	}
+	if v.Featured {
+		n := 0
+		for _, w := range c.Works {
+			if w.Featured && w.ID != id {
+				n++
+			}
+		}
+		if n >= limFeatured {
+			return Work{}, badRequest(fmt.Sprintf("首页轮播最多放 %d 张，先取消一张再选", limFeatured))
+		}
 	}
 	v.ID = id
 	return v, a.put(ctx, kindWork, id, v)

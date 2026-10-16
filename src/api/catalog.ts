@@ -29,11 +29,15 @@ export const LIMITS = {
   maxPrice: 10_000_000,
   includes: 10,
   includeText: 30,
+  steps: 10,
+  stepText: 40,
   tags: 5,
   tagText: 10,
   images: 6,
 
   workTitle: 20,
+  /** 首页轮播最多几张 */
+  featuredWorks: 6,
   durationText: 20,
   minRatio: 0.5,
   maxRatio: 2,
@@ -144,6 +148,8 @@ export function cleanService(s: ServiceInput): ServiceInput {
     // 封面就是第一张图
     cover: images[0] ?? '', images,
   }
+  const steps = lines(s.steps)
+  if (steps.length) out.steps = steps
   if (s.priceFrom) out.priceFrom = true
   if (s.hidden) out.hidden = true
   return out
@@ -162,6 +168,8 @@ export function validateService(s: ServiceInput): string | undefined {
     isInt(s.price) && s.deposit > s.price ? '定金不能比价格高' : undefined,
     s.includes.length > LIMITS.includes ? `包含内容最多 ${LIMITS.includes} 条` : undefined,
     s.includes.find(x => len(x) > LIMITS.includeText) ? `包含内容每条最多 ${LIMITS.includeText} 个字` : undefined,
+    (s.steps?.length ?? 0) > LIMITS.steps ? `流程说明最多 ${LIMITS.steps} 步` : undefined,
+    s.steps?.find(x => len(x) > LIMITS.stepText) ? `流程说明每步最多 ${LIMITS.stepText} 个字` : undefined,
     s.tags.length > LIMITS.tags ? `标签最多 ${LIMITS.tags} 个` : undefined,
     s.tags.find(x => len(x) > LIMITS.tagText) ? `标签每个最多 ${LIMITS.tagText} 个字` : undefined,
     !s.images.length ? '至少选一张图' : undefined,
@@ -179,6 +187,7 @@ export function cleanWork(w: WorkInput): WorkInput {
     image: trim(w.image), ratio: w.ratio, durationText: trim(w.durationText),
   }
   if (w.serviceId) out.serviceId = w.serviceId
+  if (w.featured) out.featured = true
   return out
 }
 

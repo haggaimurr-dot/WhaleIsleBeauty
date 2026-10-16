@@ -33,6 +33,13 @@ const services: Service[] = [
     id: 's1', name: '韩式上镜妆（含发型）', summary: '适合拍照、证件照', category: 'camera',
     durationMin: 90, price: 29800, deposit: 5000,
     includes: ['妆前护肤和底妆', '眼妆、修容、唇妆', '简单盘发或卷发', '假睫毛可选，不另收费'],
+    steps: [
+      '先聊拍什么、穿什么，看一眼衣服颜色',
+      '卸妆洁面，按肤质做妆前护肤和保湿',
+      '薄涂底妆，局部遮瑕，镜头下不卡粉',
+      '眼妆、修容、唇妆，按脸型调整轮廓',
+      '盘发或卷发，最后对着手机镜头确认一遍',
+    ],
     tags: ['拍照不假面', '氧气感底妆', '含简单盘发'],
     cover: 'placeholder:g2', images: ['placeholder:g2', 'placeholder:g6', 'placeholder:g4'], bookedCount: 128,
   },
@@ -40,6 +47,13 @@ const services: Service[] = [
     id: 's2', name: '日常约会妆', summary: '可教你日常怎么画', category: 'date',
     durationMin: 60, price: 16800, deposit: 3000,
     includes: ['妆前护肤和底妆', '眼妆和唇妆', '化妆师讲解日常画法'],
+    steps: [
+      '先看看你平时怎么画、手边有哪些化妆品',
+      '妆前护肤，底妆只做薄薄一层',
+      '画一边眼妆给你看，另一边你自己试着画',
+      '唇妆和腮红，选适合日常的颜色',
+      '把用到的步骤和产品写给你带走',
+    ],
     tags: ['近看也干净', '可学可带走'],
     cover: 'placeholder:g4', images: ['placeholder:g4', 'placeholder:g2'], bookedCount: 96,
   },
@@ -47,6 +61,12 @@ const services: Service[] = [
     id: 's3', name: '新娘跟妆', summary: '需提前沟通，含试妆一次', category: 'bridal',
     durationMin: 180, price: 128000, priceFrom: true, deposit: 30000,
     includes: ['试妆一次', '婚礼当天早妆', '全天跟妆补妆', '造型更换两次'],
+    steps: [
+      '婚礼前一个月左右约一次沟通，聊流程和造型',
+      '试妆一次，定下妆面、发型和头饰',
+      '婚礼当天早上按时间表上门或到店化妆',
+      '全天跟妆，敬酒、换装时补妆和换造型',
+    ],
     tags: ['持妆一整天', '含试妆'],
     cover: 'placeholder:g3', images: ['placeholder:g3', 'placeholder:g1'], bookedCount: 41,
   },
@@ -54,16 +74,22 @@ const services: Service[] = [
     id: 's4', name: '主持/年会妆', summary: '适合舞台灯光', category: 'host',
     durationMin: 90, price: 23800, deposit: 5000,
     includes: ['舞台底妆', '立体修容', '眼妆和唇妆', '简单发型'],
+    steps: [
+      '先问清楚舞台灯光和站位远近',
+      '妆前控油，底妆选不反光的质地',
+      '修容和眼妆加重一些，远处看也有轮廓',
+      '唇妆、发型，最后定妆',
+    ],
     tags: ['舞台灯光下', '上镜不反光'],
     cover: 'placeholder:g5', images: ['placeholder:g5'], bookedCount: 57,
   },
 ]
 
 const works: Work[] = [
-  { id: 'w1', title: '氧气上镜妆', category: 'camera', artistId: 'a1', serviceId: 's1', image: 'placeholder:g2', ratio: 1.25, durationText: '约 90 分钟' },
+  { id: 'w1', title: '氧气上镜妆', category: 'camera', artistId: 'a1', serviceId: 's1', image: 'placeholder:g2', ratio: 1.25, durationText: '约 90 分钟', featured: true },
   { id: 'w2', title: '清透约会妆', category: 'date', artistId: 'a3', serviceId: 's2', image: 'placeholder:g4', ratio: 1.5, durationText: '约 60 分钟' },
-  { id: 'w3', title: '中式新娘妆', category: 'bridal', artistId: 'a2', serviceId: 's3', image: 'placeholder:g3', ratio: 1.6, durationText: '需提前沟通' },
-  { id: 'w4', title: '年会主持妆', category: 'host', artistId: 'a1', serviceId: 's4', image: 'placeholder:g5', ratio: 1.3, durationText: '约 90 分钟' },
+  { id: 'w3', title: '中式新娘妆', category: 'bridal', artistId: 'a2', serviceId: 's3', image: 'placeholder:g3', ratio: 1.6, durationText: '需提前沟通', featured: true },
+  { id: 'w4', title: '年会主持妆', category: 'host', artistId: 'a1', serviceId: 's4', image: 'placeholder:g5', ratio: 1.3, durationText: '约 90 分钟', featured: true },
   { id: 'w5', title: '毕业照妆', category: 'camera', artistId: 'a3', serviceId: 's1', image: 'placeholder:g6', ratio: 1.45, durationText: '约 75 分钟' },
   { id: 'w6', title: '韩式新娘妆', category: 'bridal', artistId: 'a2', serviceId: 's3', image: 'placeholder:g1', ratio: 1.25, durationText: '需提前沟通' },
   { id: 'w7', title: '面试淡妆', category: 'date', artistId: 'a3', serviceId: 's2', image: 'placeholder:g2', ratio: 1.4, durationText: '约 45 分钟' },
@@ -624,8 +650,12 @@ function checked<T>(v: T, validate: (v: T) => string | undefined): T {
   return v
 }
 
-function checkWork(req: WorkInput): WorkInput {
+/** id 是正在改的那张，新建时不传 */
+function checkWork(req: WorkInput, id?: ID): WorkInput {
   const w = checked(cleanWork(req), validateWork)
+  if (w.featured && works.filter(x => x.featured && x.id !== id).length >= LIMITS.featuredWorks) {
+    throw new ApiError('UNKNOWN', `首页轮播最多放 ${LIMITS.featuredWorks} 张，先取消一张再选`)
+  }
   if (!artists.some(a => a.id === w.artistId)) throw new ApiError('UNKNOWN', '选的化妆师不在了，换一位吧')
   if (w.serviceId && !services.some(s => s.id === w.serviceId)) throw new ApiError('UNKNOWN', '关联的项目不在了，换一个吧')
   return w
@@ -1025,7 +1055,7 @@ export const mockApi: Api = {
     await delay(400)
     requireOwner()
     const i = indexOrThrow(works, id)
-    works[i] = { id, ...checkWork(req) }
+    works[i] = { id, ...checkWork(req, id) }
     return clone(works[i])
   },
   async deleteWork(id) {

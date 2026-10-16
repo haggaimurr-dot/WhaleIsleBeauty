@@ -457,6 +457,33 @@ func seedCatalog(db *sql.DB) error {
 		}
 		log.Printf("catalog seeded: %s", kind)
 	}
+	return seedServiceSteps(db, now)
+}
+
+// seedServiceSteps 老库里的四个初始项目补一次到店流程；店主已经填过流程、或者项目删掉了的不动
+func seedServiceSteps(db *sql.DB, now time.Time) error {
+	const version = "seed:service-steps"
+	var done int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&done); err != nil {
+		return err
+	}
+	if done > 0 {
+		return nil
+	}
+	for _, sv := range seedServices {
+		steps, err := json.Marshal(sv.Steps)
+		if err != nil {
+			return err
+		}
+		if _, err := db.Exec(`UPDATE catalog SET data = JSON_SET(data, '$.steps', CAST(? AS JSON)), updated_at = ?
+			WHERE kind = ? AND id = ? AND JSON_EXTRACT(data, '$.steps') IS NULL`, string(steps), now, kindService, sv.ID); err != nil {
+			return fmt.Errorf("seed service steps: %w", err)
+		}
+	}
+	if _, err := db.Exec(`INSERT IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`, version, now); err != nil {
+		return err
+	}
+	log.Print("catalog seeded: service steps")
 	return nil
 }
 

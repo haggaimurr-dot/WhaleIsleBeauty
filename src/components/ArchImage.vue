@@ -5,6 +5,7 @@
   >
     <view v-if="placeholder" class="arch-image__fill arch-image__ph" :class="`arch-image__ph--${placeholder}`" />
     <image v-else class="arch-image__fill" :src="src" :mode="mode" />
+    <view v-if="rim && shape === 'arch'" class="arch-image__rim" />
     <text v-if="label" class="arch-image__label">{{ label }}</text>
   </view>
 </template>
@@ -33,6 +34,8 @@ const props = withDefaults(defineProps<{
    * 就把尺寸写在外面包的 view 上，这里加 fill
    */
   fill?: boolean
+  /** 沿拱形内侧描一圈细线，像梳妆镜的镜框边，只在首页这类“门面”位置用 */
+  rim?: boolean
 }>(), {
   shape: 'arch',
   mode: 'aspectFill',
@@ -78,6 +81,18 @@ const placeholder = computed(() => {
     &__ph--#{$name} {
       background: $bg;
     }
+  }
+
+  // 镜框边：比外轮廓往里收一点，线很细、半透明，压在图上不抢内容
+  &__rim {
+    position: absolute;
+    top: 10rpx;
+    right: 10rpx;
+    bottom: 10rpx;
+    left: 10rpx;
+    border: 2rpx solid rgba($card, 0.55);
+    border-radius: 999rpx 999rpx 30rpx 30rpx;
+    pointer-events: none;
   }
 
   &__label {

@@ -287,6 +287,43 @@ func TestWorks(t *testing.T) {
 	wantCode(t, a.DeleteWork(ctx, owner, "w1"), "NOT_FOUND")
 }
 
+func TestFeaturedWorks(t *testing.T) {
+	a, _ := newTestApp(t)
+	ctx, owner := context.Background(), user(t, a, ownerOpenID)
+	seeded := 0
+	for _, w := range must(a.Works(ctx, "")) {
+		if w.Featured {
+			seeded++
+		}
+	}
+	w := testWork
+	w.Featured = true
+	for i := seeded; i < limFeatured; i++ {
+		must(a.CreateWork(ctx, owner, w))
+	}
+	_, err := a.CreateWork(ctx, owner, w)
+	wantCode(t, err, "UNKNOWN")
+	// 已经在轮播里的再保存一次不受上限影响，取消一张后可以再选
+	first := must(a.Works(ctx, ""))[0]
+	first.Title = "改个名"
+	must(a.UpdateWork(ctx, owner, first.ID, first))
+	first.Featured = false
+	must(a.UpdateWork(ctx, owner, first.ID, first))
+	must(a.CreateWork(ctx, owner, w))
+}
+
+func TestServiceSteps(t *testing.T) {
+	s := cleanService(Service{Steps: []string{" 先卸妆 ", "", "再上底妆"}})
+	if len(s.Steps) != 2 || s.Steps[0] != "先卸妆" {
+		t.Fatalf("steps %v", s.Steps)
+	}
+	long := testService
+	long.Steps = []string{strings.Repeat("长", limStepText+1)}
+	if msg := validateService(cleanService(long)); msg != "流程说明每步最多 40 个字" {
+		t.Fatalf("msg %q", msg)
+	}
+}
+
 func TestCatalogHTTP(t *testing.T) {
 	a, _ := newTestApp(t)
 	h := a.Routes()

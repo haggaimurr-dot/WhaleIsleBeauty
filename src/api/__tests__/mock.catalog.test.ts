@@ -101,6 +101,17 @@ describe('项目', () => {
     expect((await api.listServices()).map(x => x.id)).toContain(s.id)
   })
 
+  it('流程说明可以不填，填了去掉空行，有条数和字数上限', async () => {
+    const s = await api.createService(service)
+    expect(s).not.toHaveProperty('steps')
+    const withSteps = await api.createService({ ...service, steps: [' 先卸妆洁面 ', '', '再上底妆'] })
+    expect(withSteps.steps).toEqual(['先卸妆洁面', '再上底妆'])
+    await expect(api.createService({ ...service, steps: Array(11).fill('一步') }))
+      .rejects.toSatisfy(e => message(e) === '流程说明最多 10 步')
+    await expect(api.createService({ ...service, steps: ['长'.repeat(41)] }))
+      .rejects.toSatisfy(e => message(e) === '流程说明每步最多 40 个字')
+  })
+
   it('定金不能比价格高，时长按 15 分钟一档', async () => {
     await expect(api.createService({ ...service, deposit: 20000 })).rejects.toSatisfy(e => message(e) === '定金不能比价格高')
     await expect(api.createService({ ...service, durationMin: 70 })).rejects.toSatisfy(e => code(e) === 'UNKNOWN')
@@ -171,6 +182,21 @@ describe('作品', () => {
   it('化妆师或项目不存在时不能保存', async () => {
     await expect(api.createWork({ ...work, artistId: 'nope' })).rejects.toSatisfy(e => code(e) === 'UNKNOWN')
     await expect(api.createWork({ ...work, serviceId: 'nope' })).rejects.toSatisfy(e => code(e) === 'UNKNOWN')
+  })
+
+  it('首页轮播：只存 true，最多放 6 张，取消后可以再选', async () => {
+    const plain = await api.createWork({ ...work, featured: false })
+    expect(plain).not.toHaveProperty('featured')
+    const seeded = (await api.listOwnerWorks()).filter(w => w.featured).length
+    for (let i = seeded; i < 6; i++) await api.createWork({ ...work, featured: true })
+    await expect(api.createWork({ ...work, featured: true }))
+      .rejects.toSatisfy(e => code(e) === 'UNKNOWN' && message(e) === '首页轮播最多放 6 张，先取消一张再选')
+    const first = (await api.listWorks()).find(w => w.featured)!
+    // 已经在轮播里的改别的字段不受上限影响
+    await api.updateWork(first.id, { ...first, title: '改个名' })
+    await api.updateWork(first.id, { ...first, featured: false })
+    await api.updateWork(plain.id, { ...plain, featured: true })
+    expect((await api.listWorks()).filter(w => w.featured)).toHaveLength(6)
   })
 
   it('修改和删除', async () => {
