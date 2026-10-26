@@ -2,11 +2,15 @@
  * 订阅消息（一次性订阅）。客人点一次、同意一次，后端才能给他发一条对应的消息。
  *
  * - 预约确认：店主在工作台点“确认”后发（confirmBooking）
- * - 到店提醒：预约开始前一天由后端定时发
+ * - 到店提醒：预约开始前一天 18:00 以后由后端定时任务发（只发给已确认的预约）
+ * - 预约变动提醒（发给店主）：客人付完定金、改期、取消时发。店主在排班页同意一次攒一条，见 requestOwnerSubscribe
+ *
+ * 后端实现在 server/notify.go，模板 ID 和下面的字段两边要一致。
  *
  * 必须在点击事件里同步发起，前面不能有 await，否则微信会报“只能由用户点击触发”。
  * 客人拒绝、关掉弹窗或调用失败都不影响预约本身，所以这里永远 resolve。
  */
+import { USE_MOCK } from '@/api'
 
 /**
  * 小程序后台「订阅消息 → 我的模板」里的模板 ID。留空的模板会跳过，全部为空时不弹窗。
@@ -25,18 +29,45 @@
  *   time3    开始时间   “2026年10月01日 14:00”
  *   thing6   地点       门店地址
  *   thing5   日程描述   如“明天见，素颜过来就好”
+ *
+ * owner — 新订单提醒（公共模板 28904），发给店主：客人付完定金、改期、取消时发
+ *   thing44  项目名称   服务名
+ *   time43   预定日期   “2026年10月01日 14:00”
+ *   thing17  客人姓名   昵称 + 化妆师，如“柚子27 · 小鲸”
+ *   phrase12 订单状态   新预约 / 已改期 / 已取消（phrase 最多 5 个字）
+ *   thing15  订单备注   如“定金已付，等你确认”
  */
-export const SUBSCRIBE_TEMPLATES: Record<'confirmed' | 'reminder', string> = {
+export const SUBSCRIBE_TEMPLATES: Record<'confirmed' | 'reminder' | 'owner', string> = {
   confirmed: 'R6MUu_p5k6R-LPbVgm60btOsqWDVdb3Rbpykw8hH08Q',
   reminder: 'TpVpZ-EaOftX3_nW3RFYtx1BiBwpZbJRtJEfifCeM2Y',
+  owner: '-wVPwTNjeSYb3YC5OpABnetI94tdELo593BIVXSC0tc',
 }
 
-export type SubscribeKind = keyof typeof SUBSCRIBE_TEMPLATES
+export type SubscribeKind = Exclude<keyof typeof SUBSCRIBE_TEMPLATES, 'owner'>
 
 export function requestSubscribe(kinds: SubscribeKind[]): Promise<void> {
   const tmplIds = kinds.map(k => SUBSCRIBE_TEMPLATES[k]).filter(Boolean)
   if (!tmplIds.length) return Promise.resolve()
   return new Promise(resolve => {
     uni.requestSubscribeMessage({ tmplIds, complete: () => resolve() })
+  })
+}
+
+/** 店主的预约变动提醒能不能用：模板配了，或者在 mock 演示里（留空时 mock 直接当作同意） */
+export const OWNER_SUBSCRIBE_READY = !!SUBSCRIBE_TEMPLATES.owner || USE_MOCK
+
+/**
+ * 店主订阅一次预约变动提醒，resolve 为是否同意（同意了要调 api.addOwnerNotify(1) 记到后端）。
+ * 和 requestSubscribe 一样必须在点击事件里同步发起。mock 演示时模板还没配，直接当作同意
+ */
+export function requestOwnerSubscribe(): Promise<boolean> {
+  const id = SUBSCRIBE_TEMPLATES.owner
+  if (!id) return Promise.resolve(USE_MOCK)
+  return new Promise(resolve => {
+    uni.requestSubscribeMessage({
+      tmplIds: [id],
+      success: res => resolve((res as unknown as Record<string, string>)[id] === 'accept'),
+      fail: () => resolve(false),
+    })
   })
 }

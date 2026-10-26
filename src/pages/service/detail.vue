@@ -1,7 +1,7 @@
 <template>
   <view>
-    <!-- 自定义导航：只有一个返回按钮，和右上角胶囊垂直居中对齐 -->
-    <view class="back" :style="backStyle" hover-class="back--hover" @tap="goBack">
+    <!-- 自定义导航：只有一个返回按钮，和右上角胶囊垂直居中对齐。朋友圈单页模式有微信自己的导航栏，不能返回，不显示 -->
+    <view v-if="!singlePage" class="back" :style="backStyle" hover-class="back--hover" @tap="goBack">
       <image class="back__icon" src="/static/icons/back.svg" />
     </view>
 
@@ -24,7 +24,7 @@
 
       <view v-else-if="service" class="body">
         <view class="title">{{ service.name }}</view>
-        <view class="meta">约 {{ service.durationMin }} 分钟　已有 {{ service.bookedCount }} 位客人选择</view>
+        <view class="meta">约 {{ service.durationMin }} 分钟<text v-if="service.bookedCount">　已有 {{ service.bookedCount }} 位客人选择</text></view>
 
         <view class="tags">
           <text v-for="t in service.tags" :key="t" class="tag">{{ t }}</text>
@@ -33,6 +33,13 @@
         <view class="box">
           <view class="box__title">包含</view>
           <view v-for="item in service.includes" :key="item" class="box__li">{{ item }}</view>
+        </view>
+        <view v-if="service.steps?.length" class="box">
+          <view class="box__title">到店流程</view>
+          <view v-for="(step, i) in service.steps" :key="i" class="box__step">
+            <text class="box__no">{{ i + 1 }}</text>
+            <text>{{ step }}</text>
+          </view>
         </view>
         <view class="box">
           <view class="box__title">使用的产品</view>
@@ -45,7 +52,11 @@
       </view>
 
       <template #footer>
-        <BottomBar v-if="service" :desc="`定金 ${formatPrice(service.deposit)}，到店付尾款`">
+        <!-- 店主下架了：分享出去的链接还能打开，但不能约，引导去看别的项目 -->
+        <BottomBar v-if="service?.hidden" title="这个项目暂时不接预约" desc="看看别的项目，或者联系门店问问">
+          <AppButton variant="ghost" @click="toHome">看看别的</AppButton>
+        </BottomBar>
+        <BottomBar v-else-if="service" :desc="`定金 ${formatPrice(service.deposit)}，到店付尾款`">
           <template #title>
             <text class="price">{{ formatPrice(service.price) }}</text>
             <text v-if="service.priceFrom" class="price__from">起</text>
@@ -59,10 +70,10 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
+import { onLoad, onShareAppMessage, onShareTimeline } from '@dcloudio/uni-app'
 import { api, errorText, type ID, type Service } from '@/api'
 import { formatPrice } from '@/utils/money'
-import { SHOP_NAME, shareImage, sharePath } from '@/utils/share'
+import { isSinglePage, SHOP_NAME, shareImage, sharePath, shareQuery } from '@/utils/share'
 import { switchTab } from '@/utils/tab'
 import AppButton from '@/components/AppButton.vue'
 import ArchImage from '@/components/ArchImage.vue'
@@ -81,6 +92,7 @@ let serviceId: ID = ''
 
 // ---------- 返回按钮位置 ----------
 
+const singlePage = isSinglePage()
 const menu = uni.getMenuButtonBoundingClientRect()
 const BACK_SIZE = 32 // px，与原型一致
 const backStyle = {
@@ -115,14 +127,20 @@ onLoad(query => {
 })
 
 // 价格写在标题里：价格透明本来就是卖点。还没加载出来时退回门店名
-onShareAppMessage(() => {
+function shareTitle() {
   const s = service.value
-  return {
-    title: s ? `${s.name}｜${formatPrice(s.price, { from: s.priceFrom })}，约 ${s.durationMin} 分钟` : SHOP_NAME,
-    path: sharePath('/pages/service/detail', { id: serviceId }),
-    imageUrl: shareImage(s?.cover),
-  }
-})
+  return s ? `${s.name}｜${formatPrice(s.price, { from: s.priceFrom })}，约 ${s.durationMin} 分钟` : SHOP_NAME
+}
+onShareAppMessage(() => ({
+  title: shareTitle(),
+  path: sharePath('/pages/service/detail', { id: serviceId }),
+  imageUrl: shareImage(service.value?.cover),
+}))
+onShareTimeline(() => ({
+  title: shareTitle(),
+  query: shareQuery({ id: serviceId }),
+  imageUrl: shareImage(service.value?.cover),
+}))
 
 function onSwipe(e: { detail: { current: number } }) {
   imageIndex.value = e.detail.current
@@ -131,6 +149,8 @@ function onSwipe(e: { detail: { current: number } }) {
 const toBooking = () => {
   if (service.value) switchTab('booking', { serviceId: service.value.id })
 }
+
+const toHome = () => switchTab('home')
 </script>
 
 <style lang="scss">
@@ -228,6 +248,21 @@ const toBooking = () => {
     font-size: $fs-small;
     line-height: 1.9;
     color: $ink;
+  }
+
+  &__step {
+    display: flex;
+    gap: 16rpx;
+    font-size: $fs-small;
+    line-height: 1.9;
+    color: $ink;
+  }
+
+  &__no {
+    flex: none;
+    width: 28rpx;
+    font-family: $font-serif;
+    color: $mocha;
   }
 
   &__li {

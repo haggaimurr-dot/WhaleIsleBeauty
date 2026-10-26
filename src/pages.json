@@ -3,18 +3,39 @@
 	"pages": [
 		{ "path": "pages/home/index", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
 		{ "path": "pages/works/index", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
-		{ "path": "pages/service/detail", "style": { "disableScroll": true, "navigationStyle": "custom" } },
+		{ "path": "pages/service/detail", "style": { "disableScroll": true, "navigationStyle": "custom", "navigationBarTitleText": "项目详情" } },
 		{ "path": "pages/booking/index", "style": { "disableScroll": true, "navigationBarTitleText": "预约" } },
 		{ "path": "pages/booking/success", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
 		{ "path": "pages/booking/reschedule", "style": { "disableScroll": true, "navigationBarTitleText": "改期" } },
 		{ "path": "pages/me/index", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
-		{ "path": "pages/me/skin", "style": { "disableScroll": true, "navigationBarTitleText": "肤质档案" } }
+		{ "path": "pages/me/skin", "style": { "disableScroll": true, "navigationBarTitleText": "肤质档案" } },
+		{ "path": "pages/products/index", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
+		{ "path": "pages/course/index", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
+		{ "path": "pages/course/detail", "style": { "disableScroll": true, "navigationBarTitleText": "" } },
+		{ "path": "pages/course/invite", "style": { "disableScroll": true, "navigationBarTitleText": "录课邀请" } },
+		{ "path": "pages/me/teaching", "style": { "disableScroll": true, "navigationBarTitleText": "我的课堂" } }
 	],
 	"subPackages": [
 		{
 			"root": "pages-owner",
 			"pages": [
-				{ "path": "schedule/index", "style": { "disableScroll": true, "navigationBarTitleText": "工作台" } }
+				{ "path": "schedule/index", "style": { "disableScroll": true, "navigationBarTitleText": "工作台" } },
+				{ "path": "stats/index", "style": { "disableScroll": true, "navigationBarTitleText": "经营统计" } },
+				{ "path": "catalog/index", "style": { "disableScroll": true, "navigationBarTitleText": "门店资料" } },
+				{ "path": "catalog/shop", "style": { "disableScroll": true, "navigationBarTitleText": "门店信息" } },
+				{ "path": "catalog/artists", "style": { "disableScroll": true, "navigationBarTitleText": "化妆师" } },
+				{ "path": "catalog/artist", "style": { "disableScroll": true, "navigationBarTitleText": "化妆师" } },
+				{ "path": "catalog/services", "style": { "disableScroll": true, "navigationBarTitleText": "项目" } },
+				{ "path": "catalog/service", "style": { "disableScroll": true, "navigationBarTitleText": "项目" } },
+				{ "path": "catalog/works", "style": { "disableScroll": true, "navigationBarTitleText": "作品" } },
+				{ "path": "catalog/work", "style": { "disableScroll": true, "navigationBarTitleText": "作品" } },
+				{ "path": "catalog/products", "style": { "disableScroll": true, "navigationBarTitleText": "化妆品" } },
+				{ "path": "catalog/product", "style": { "disableScroll": true, "navigationBarTitleText": "化妆品" } },
+				{ "path": "catalog/courses", "style": { "disableScroll": true, "navigationBarTitleText": "课程" } },
+				{ "path": "catalog/course", "style": { "disableScroll": true, "navigationBarTitleText": "课程" } },
+				{ "path": "catalog/teachers", "style": { "disableScroll": true, "navigationBarTitleText": "讲师" } },
+				{ "path": "catalog/teacher", "style": { "disableScroll": true, "navigationBarTitleText": "讲师" } },
+				{ "path": "catalog/payouts", "style": { "disableScroll": true, "navigationBarTitleText": "讲师分成" } }
 			]
 		}
 	],

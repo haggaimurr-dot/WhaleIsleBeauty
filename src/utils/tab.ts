@@ -9,8 +9,11 @@ export type TabPage = 'home' | 'works' | 'booking' | 'me'
 export interface TabParams {
   home: undefined
   works: { category?: StyleCategory }
-  /** 预约同款、预约这个妆时带过去，预约页据此预选 */
-  booking: { serviceId?: ID; artistId?: ID } | undefined
+  /**
+   * 预约同款、预约这个妆、再约一次时带过去，预约页据此预选；again 表示照着客人上次的预约选；
+   * courseId 表示从这门课点进来的，下单时带上（顾客讲师的分成按它算）
+   */
+  booking: { serviceId?: ID; artistId?: ID; again?: boolean; courseId?: ID } | undefined
   me: undefined
 }
 

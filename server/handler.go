@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -73,9 +74,26 @@ func (a *App) withUser(next http.HandlerFunc) http.HandlerFunc {
 func (a *App) Routes() http.Handler {
 	mux := http.NewServeMux()
 	h := func(pattern string, f http.HandlerFunc) { mux.HandleFunc(pattern, a.withUser(f)) }
+	// pub 公开资料，不认人：朋友圈打开的“单页模式”没有登录态，网关不带 X-WX-OPENID
+	pub := mux.HandleFunc
 
 	// 云托管的健康检查
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+
+	// 外部定时器补发到店提醒（服务缩到 0 个实例时内置定时器不跑）。不经过小程序，靠口令保护
+	if a.cronToken != "" {
+		mux.HandleFunc("POST /cron/reminders", func(w http.ResponseWriter, r *http.Request) {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Cron-Token")), []byte(a.cronToken)) != 1 {
+				writeErr(w, r, errForbidden)
+				return
+			}
+			if err := a.Sweep(r.Context()); err != nil {
+				writeErr(w, r, err)
+				return
+			}
+			reply(w, r, struct{}{}, a.SendReminders(r.Context()))
+		})
+	}
 
 	// ---------- 登录和我的 ----------
 	me := func(w http.ResponseWriter, r *http.Request) {
@@ -100,28 +118,49 @@ func (a *App) Routes() http.Handler {
 		reply(w, r, p, err)
 	})
 
-	// ---------- 基础资料 ----------
-	h("GET /v1/artists", func(w http.ResponseWriter, r *http.Request) { reply(w, r, artists, nil) })
-	h("GET /v1/services", func(w http.ResponseWriter, r *http.Request) { reply(w, r, services, nil) })
-	h("GET /v1/services/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if s := findService(r.PathValue("id")); s != nil {
-			reply(w, r, s, nil)
-		} else {
-			writeErr(w, r, errNotFound)
-		}
+	// ---------- 基础资料（公开） ----------
+	pub("GET /v1/artists", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Artists(r.Context())
+		reply(w, r, v, err)
 	})
-	h("GET /v1/works", func(w http.ResponseWriter, r *http.Request) {
-		c := r.URL.Query().Get("category")
-		out := []Work{}
-		for _, wk := range works {
-			if c == "" || wk.Category == c {
-				out = append(out, wk)
+	pub("GET /v1/services", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Services(r.Context())
+		reply(w, r, v, err)
+	})
+	pub("GET /v1/services/{id}", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Service(r.Context(), r.PathValue("id"))
+		reply(w, r, v, err)
+	})
+	pub("GET /v1/works", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Works(r.Context(), r.URL.Query().Get("category"))
+		reply(w, r, v, err)
+	})
+	pub("GET /v1/dates", func(w http.ResponseWriter, r *http.Request) { reply(w, r, a.datesFrom(1, bookableDays), nil) })
+	pub("GET /v1/shop", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Shop(r.Context())
+		reply(w, r, v, err)
+	})
+	pub("GET /v1/products", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Products(r.Context(), r.URL.Query().Get("category"))
+		reply(w, r, v, err)
+	})
+	pub("GET /v1/courses", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.Courses(r.Context(), r.URL.Query().Get("category"))
+		reply(w, r, v, err)
+	})
+	// 课程详情也是公开的；带了 openid（不是朋友圈单页模式）就附上这位客人的进度，没注册过的不新建
+	pub("GET /v1/courses/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var u *User
+		if openid := strings.TrimSpace(r.Header.Get("X-WX-OPENID")); openid != "" {
+			var err error
+			if u, err = a.store.UserByOpenID(r.Context(), openid); err != nil {
+				writeErr(w, r, err)
+				return
 			}
 		}
-		reply(w, r, out, nil)
+		v, err := a.Course(r.Context(), u, r.PathValue("id"))
+		reply(w, r, v, err)
 	})
-	h("GET /v1/dates", func(w http.ResponseWriter, r *http.Request) { reply(w, r, a.datesFrom(1, bookableDays), nil) })
-	h("GET /v1/shop", func(w http.ResponseWriter, r *http.Request) { reply(w, r, shop, nil) })
 
 	// ---------- 客人端预约 ----------
 	h("GET /v1/slots", func(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +177,13 @@ func (a *App) Routes() http.Handler {
 		v, err := a.CreateBooking(r.Context(), userOf(r), req)
 		reply(w, r, v, err)
 	})
+	// ---------- 课堂（客人端） ----------
+	h("PUT /v1/courses/{id}/progress", bodyID(a.SaveCourseProgress))
+	h("GET /v1/teacher-invites/{id}", byID(a.TeacherInvite))
+	h("POST /v1/teacher-invites/{id}/accept", bodyID(a.AcceptTeacherInvite))
+	h("GET /v1/me/teaching", list(a.MyTeaching))
+	h("POST /v1/me/teaching/quit", list(a.QuitTeaching))
+
 	h("GET /v1/bookings/mine", func(w http.ResponseWriter, r *http.Request) {
 		v, err := a.ListMyBookings(r.Context(), userOf(r), r.URL.Query().Get("scope"))
 		reply(w, r, v, err)
@@ -184,6 +230,15 @@ func (a *App) Routes() http.Handler {
 		v, err := a.ConfirmBooking(r.Context(), userOf(r), r.PathValue("id"))
 		reply(w, r, v, err)
 	})
+	h("POST /v1/owner/bookings/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.OwnerCancelBooking(r.Context(), userOf(r), r.PathValue("id"))
+		reply(w, r, v, err)
+	})
+	h("POST /v1/owner/bookings/{id}/reschedule", bodyID(a.OwnerRescheduleBooking))
+	h("POST /v1/owner/bookings/{id}/no-show", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.MarkNoShow(r.Context(), userOf(r), r.PathValue("id"))
+		reply(w, r, v, err)
+	})
 	slot := func(f func(context.Context, *User, SlotReq) error) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			var req SlotReq
@@ -197,6 +252,90 @@ func (a *App) Routes() http.Handler {
 	h("PUT /v1/owner/blocks", slot(a.BlockSlot))
 	h("DELETE /v1/owner/blocks", slot(a.UnblockSlot))
 
+	// ---------- 资料维护（店主端） ----------
+	h("GET /v1/owner/notify", list(a.OwnerNotify))
+	h("POST /v1/owner/notify", body(a.AddOwnerNotify))
+	h("GET /v1/owner/stats", list(a.MonthStats))
+
+	h("PUT /v1/owner/shop", body(a.UpdateShop))
+	h("POST /v1/owner/artists", body(a.CreateArtist))
+	h("PUT /v1/owner/artists/{id}", bodyID(a.UpdateArtist))
+	h("DELETE /v1/owner/artists/{id}", del(a.DeleteArtist))
+	h("GET /v1/owner/services", list(a.OwnerServices))
+	h("POST /v1/owner/services", body(a.CreateService))
+	h("PUT /v1/owner/services/{id}", bodyID(a.UpdateService))
+	h("DELETE /v1/owner/services/{id}", del(a.DeleteService))
+	h("GET /v1/owner/works", list(a.OwnerWorks))
+	h("POST /v1/owner/works", body(a.CreateWork))
+	h("PUT /v1/owner/works/{id}", bodyID(a.UpdateWork))
+	h("DELETE /v1/owner/works/{id}", del(a.DeleteWork))
+	h("POST /v1/owner/products", body(a.CreateProduct))
+	h("PUT /v1/owner/products/{id}", bodyID(a.UpdateProduct))
+	h("DELETE /v1/owner/products/{id}", del(a.DeleteProduct))
+
+	// ---------- 课堂（店主端） ----------
+	h("GET /v1/owner/courses", list(a.OwnerCourses))
+	h("GET /v1/owner/courses/{id}", byID(a.OwnerCourse))
+	h("POST /v1/owner/courses", body(a.CreateCourse))
+	h("PUT /v1/owner/courses/{id}", bodyID(a.UpdateCourse))
+	h("DELETE /v1/owner/courses/{id}", del(a.DeleteCourse))
+	h("GET /v1/owner/teachers", list(a.Teachers))
+	h("POST /v1/owner/teachers", body(a.CreateTeacher))
+	h("PUT /v1/owner/teachers/{id}", bodyID(a.UpdateTeacher))
+	h("POST /v1/owner/teachers/{id}/end", byID(a.EndTeacher))
+	h("DELETE /v1/owner/teachers/{id}", del(a.DeleteTeacher))
+	h("GET /v1/owner/payouts", list(a.Payouts))
+	h("POST /v1/owner/payouts/{teacherId}/{month}/paid", func(w http.ResponseWriter, r *http.Request) {
+		v, err := a.MarkPayoutPaid(r.Context(), userOf(r), r.PathValue("teacherId"), r.PathValue("month"))
+		reply(w, r, v, err)
+	})
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, r, errNotFound) })
 	return mux
+}
+
+// 资料维护接口的几种形状
+
+func list[T any](f func(context.Context, *User) (T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		v, err := f(r.Context(), userOf(r))
+		reply(w, r, v, err)
+	}
+}
+
+func body[Req, T any](f func(context.Context, *User, Req) (T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req Req
+		if err := decode(r, &req); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		v, err := f(r.Context(), userOf(r), req)
+		reply(w, r, v, err)
+	}
+}
+
+func bodyID[Req, T any](f func(context.Context, *User, string, Req) (T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req Req
+		if err := decode(r, &req); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		v, err := f(r.Context(), userOf(r), r.PathValue("id"), req)
+		reply(w, r, v, err)
+	}
+}
+
+func byID[T any](f func(context.Context, *User, string) (T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		v, err := f(r.Context(), userOf(r), r.PathValue("id"))
+		reply(w, r, v, err)
+	}
+}
+
+func del(f func(context.Context, *User, string) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		reply(w, r, struct{}{}, f(r.Context(), userOf(r), r.PathValue("id")))
+	}
 }

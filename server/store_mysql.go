@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -47,6 +48,10 @@ func openMySQL(addr, user, pass, dbName string) (*mysqlStore, error) {
 	db.SetMaxOpenConns(10)
 	db.SetConnMaxLifetime(5 * time.Minute)
 	if err := migrate(db, migrationFS); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := seedCatalog(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -198,17 +203,19 @@ func (s *mysqlStore) CountCompleted(ctx context.Context, userID string) (int, er
 // ---------- 预约 ----------
 
 const bookingCols = `id, user_id, service_id, service_name, artist_id, artist_name, date, time, start_at, end_at,
-  duration_min, price, deposit, status, occasion, skin_type, note, created_at, pay_deadline, paid_at, refunded_at, cancel_reason`
+  duration_min, price, deposit, status, occasion, skin_type, note, created_at, pay_deadline, paid_at, refund_requested_at, refunded_at, cancel_reason,
+  course_id, course_title, teacher_id, share_rate`
 
 func scanBooking(sc interface{ Scan(...any) error }) (*BookingRow, error) {
 	var b BookingRow
-	var deadline, paid, refunded sql.NullTime
+	var deadline, paid, refundReq, refunded sql.NullTime
 	if err := sc.Scan(&b.ID, &b.UserID, &b.ServiceID, &b.ServiceName, &b.ArtistID, &b.ArtistName, &b.Date, &b.Time,
 		&b.StartAt, &b.EndAt, &b.DurationMin, &b.Price, &b.Deposit, &b.Status, &b.Occasion, &b.SkinType, &b.Note,
-		&b.CreatedAt, &deadline, &paid, &refunded, &b.CancelReason); err != nil {
+		&b.CreatedAt, &deadline, &paid, &refundReq, &refunded, &b.CancelReason,
+		&b.CourseID, &b.CourseTitle, &b.TeacherID, &b.ShareRate); err != nil {
 		return nil, err
 	}
-	b.PayDeadline, b.PaidAt, b.RefundedAt = timePtr(deadline), timePtr(paid), timePtr(refunded)
+	b.PayDeadline, b.PaidAt, b.RefundRequestedAt, b.RefundedAt = timePtr(deadline), timePtr(paid), timePtr(refundReq), timePtr(refunded)
 	return &b, nil
 }
 
@@ -231,10 +238,11 @@ func (s *mysqlStore) queryBookings(ctx context.Context, where string, args ...an
 
 func (s *mysqlStore) InsertBooking(ctx context.Context, b *BookingRow) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO bookings (`+bookingCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ID, b.UserID, b.ServiceID, b.ServiceName, b.ArtistID, b.ArtistName, b.Date, b.Time,
 		b.StartAt.UTC(), b.EndAt.UTC(), b.DurationMin, b.Price, b.Deposit, b.Status, b.Occasion, b.SkinType, b.Note,
-		b.CreatedAt.UTC(), nullTime(b.PayDeadline), nullTime(b.PaidAt), nullTime(b.RefundedAt), b.CancelReason)
+		b.CreatedAt.UTC(), nullTime(b.PayDeadline), nullTime(b.PaidAt), nullTime(b.RefundRequestedAt), nullTime(b.RefundedAt), b.CancelReason,
+		b.CourseID, b.CourseTitle, b.TeacherID, b.ShareRate)
 	if isDuplicate(err) {
 		return ErrSlotTaken
 	}
@@ -252,10 +260,10 @@ func (s *mysqlStore) Booking(ctx context.Context, id string) (*BookingRow, error
 func (s *mysqlStore) UpdateBooking(ctx context.Context, b *BookingRow, from string) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE bookings SET
 		artist_id = ?, artist_name = ?, date = ?, time = ?, start_at = ?, end_at = ?, status = ?,
-		pay_deadline = ?, paid_at = ?, refunded_at = ?, cancel_reason = ?
+		pay_deadline = ?, paid_at = ?, refund_requested_at = ?, refunded_at = ?, cancel_reason = ?
 		WHERE id = ? AND status = ?`,
 		b.ArtistID, b.ArtistName, b.Date, b.Time, b.StartAt.UTC(), b.EndAt.UTC(), b.Status,
-		nullTime(b.PayDeadline), nullTime(b.PaidAt), nullTime(b.RefundedAt), b.CancelReason,
+		nullTime(b.PayDeadline), nullTime(b.PaidAt), nullTime(b.RefundRequestedAt), nullTime(b.RefundedAt), b.CancelReason,
 		b.ID, from)
 	if isDuplicate(err) {
 		return ErrSlotTaken
@@ -279,10 +287,41 @@ func (s *mysqlStore) ActiveBookingsOn(ctx context.Context, date string) ([]*Book
 	return s.queryBookings(ctx, `date = ? AND active_slot IS NOT NULL`, date)
 }
 
+func (s *mysqlStore) ScheduledBookingsOn(ctx context.Context, date string) ([]*BookingRow, error) {
+	return s.queryBookings(ctx, `date = ? AND (active_slot IS NOT NULL OR status = ? OR cancel_reason = ?)`,
+		date, StatusCompleted, ReasonNoShow)
+}
+
 func (s *mysqlStore) DueBookings(ctx context.Context, now time.Time) ([]*BookingRow, error) {
 	now = now.UTC()
 	return s.queryBookings(ctx, `(status = ? AND pay_deadline <= ?) OR (status = ? AND start_at <= ?) OR (status = ? AND end_at <= ?)`,
 		StatusPendingPayment, now, StatusPendingConfirm, now, StatusConfirmed, now)
+}
+
+func (s *mysqlStore) PaidBookingsBetween(ctx context.Context, from, to string) ([]*BookingRow, error) {
+	return s.queryBookings(ctx, `date >= ? AND date < ? AND paid_at IS NOT NULL`, from, to)
+}
+
+func (s *mysqlStore) FirstVisits(ctx context.Context, userIDs []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id, MIN(date) FROM bookings
+		WHERE status = ? AND user_id IN (`+placeholders(len(userIDs))+`) GROUP BY user_id`,
+		append([]any{StatusCompleted}, toArgs(userIDs)...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, date string
+		if err := rows.Scan(&id, &date); err != nil {
+			return nil, err
+		}
+		out[id] = date
+	}
+	return out, rows.Err()
 }
 
 // ---------- 休息时段 ----------
@@ -313,5 +352,297 @@ func (s *mysqlStore) AddBlock(ctx context.Context, artistID, date, t string) err
 
 func (s *mysqlStore) RemoveBlock(ctx context.Context, artistID, date, t string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM blocks WHERE slot_key = ?`, slotKey(artistID, date, t))
+	return err
+}
+
+// ---------- 订阅消息发送记录 ----------
+
+func (s *mysqlStore) ClaimNotice(ctx context.Context, key, bookingID, kind string, at time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO notices (notice_key, booking_id, kind, result, created_at) VALUES (?, ?, ?, '', ?)`,
+		key, bookingID, kind, at.UTC())
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+func (s *mysqlStore) FinishNotice(ctx context.Context, key, result string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE notices SET result = ?, finished_at = ? WHERE notice_key = ?`, result, time.Now().UTC(), key)
+	return err
+}
+
+func (s *mysqlStore) ReleaseNotice(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM notices WHERE notice_key = ?`, key)
+	return err
+}
+
+// ---------- 店主提醒额度 ----------
+
+func (s *mysqlStore) OwnerNotifyQuota(ctx context.Context, openid string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT quota FROM owner_notify WHERE openid = ?`, openid).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
+}
+
+func (s *mysqlStore) AddOwnerNotifyQuota(ctx context.Context, openid string, n int) (int, error) {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO owner_notify (openid, quota, updated_at) VALUES (?, GREATEST(?, 0), ?)
+		 ON DUPLICATE KEY UPDATE quota = GREATEST(quota + ?, 0), updated_at = VALUES(updated_at)`,
+		openid, n, time.Now().UTC(), n)
+	if err != nil {
+		return 0, err
+	}
+	return s.OwnerNotifyQuota(ctx, openid)
+}
+
+func (s *mysqlStore) TakeOwnerNotifyQuota(ctx context.Context, openid string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE owner_notify SET quota = quota - 1, updated_at = ? WHERE openid = ? AND quota > 0`, time.Now().UTC(), openid)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// ---------- 基础资料 ----------
+
+// seedCatalog 表是空的时候写入初始数据；后来加的资料种类在老库里补一次。多个实例同时启动也没关系：主键冲突的被 IGNORE 掉
+func seedCatalog(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM catalog`).Scan(&n); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	insert := func(it CatalogItem) error {
+		if _, err := db.Exec(`INSERT IGNORE INTO catalog (kind, id, sort, data, updated_at) VALUES (?, ?, ?, ?, ?)`,
+			it.Kind, it.ID, it.Sort, it.Data, now); err != nil {
+			return fmt.Errorf("seed catalog: %w", err)
+		}
+		return nil
+	}
+	if n == 0 {
+		for _, it := range seedCatalogItems() {
+			if err := insert(it); err != nil {
+				return err
+			}
+		}
+		log.Print("catalog seeded")
+	}
+	// 后来加的种类：补过一次就记在 schema_migrations 里（新库上面已经写过，INSERT IGNORE 掉）
+	for _, kind := range lateSeedKinds {
+		version := "seed:" + kind
+		var done int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&done); err != nil {
+			return err
+		}
+		if done > 0 {
+			continue
+		}
+		for _, it := range seedCatalogItems() {
+			if it.Kind != kind {
+				continue
+			}
+			if err := insert(it); err != nil {
+				return err
+			}
+		}
+		if _, err := db.Exec(`INSERT IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`, version, now); err != nil {
+			return err
+		}
+		log.Printf("catalog seeded: %s", kind)
+	}
+	return seedServiceSteps(db, now)
+}
+
+// seedServiceSteps 老库里的四个初始项目补一次到店流程；店主已经填过流程、或者项目删掉了的不动
+func seedServiceSteps(db *sql.DB, now time.Time) error {
+	const version = "seed:service-steps"
+	var done int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&done); err != nil {
+		return err
+	}
+	if done > 0 {
+		return nil
+	}
+	for _, sv := range seedServices {
+		steps, err := json.Marshal(sv.Steps)
+		if err != nil {
+			return err
+		}
+		if _, err := db.Exec(`UPDATE catalog SET data = JSON_SET(data, '$.steps', CAST(? AS JSON)), updated_at = ?
+			WHERE kind = ? AND id = ? AND JSON_EXTRACT(data, '$.steps') IS NULL`, string(steps), now, kindService, sv.ID); err != nil {
+			return fmt.Errorf("seed service steps: %w", err)
+		}
+	}
+	if _, err := db.Exec(`INSERT IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`, version, now); err != nil {
+		return err
+	}
+	log.Print("catalog seeded: service steps")
+	return nil
+}
+
+func (s *mysqlStore) CatalogItems(ctx context.Context) ([]CatalogItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT kind, id, sort, data FROM catalog`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CatalogItem
+	for rows.Next() {
+		var it CatalogItem
+		if err := rows.Scan(&it.Kind, &it.ID, &it.Sort, &it.Data); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *mysqlStore) PutCatalogItem(ctx context.Context, it CatalogItem) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO catalog (kind, id, sort, data, updated_at) VALUES (?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = VALUES(updated_at)`,
+		it.Kind, it.ID, it.Sort, it.Data, time.Now().UTC())
+	return err
+}
+
+func (s *mysqlStore) DeleteCatalogItem(ctx context.Context, kind, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM catalog WHERE kind = ? AND id = ?`, kind, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *mysqlStore) ActiveBookingExists(ctx context.Context, artistID, serviceID string) (bool, error) {
+	col, id := "artist_id", artistID
+	if artistID == "" {
+		col, id = "service_id", serviceID
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM bookings WHERE `+col+` = ? AND status IN (`+placeholders(len(activeStatuses))+`)`,
+		append([]any{id}, toArgs(activeStatuses)...)...).Scan(&n)
+	return n > 0, err
+}
+
+// ---------- 课堂 ----------
+
+func (s *mysqlStore) ShareBookings(ctx context.Context, from, to string) ([]*BookingRow, error) {
+	return s.queryBookings(ctx, `teacher_id <> '' AND date >= ? AND date < ? AND status = ?`, from, to, StatusCompleted)
+}
+
+func (s *mysqlStore) CourseProgress(ctx context.Context, userID, courseID string) (*ProgressRow, error) {
+	var p ProgressRow
+	var finished []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT lesson_id, position_sec, finished, updated_at FROM course_progress WHERE user_id = ? AND course_id = ?`,
+		userID, courseID).Scan(&p.LessonID, &p.PositionSec, &finished, &p.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(finished, &p.Finished); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *mysqlStore) SaveCourseProgress(ctx context.Context, userID, courseID string, p ProgressRow) error {
+	finished, _ := json.Marshal(p.Finished)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO course_progress (user_id, course_id, lesson_id, position_sec, finished, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE lesson_id = VALUES(lesson_id), position_sec = VALUES(position_sec),
+		   finished = VALUES(finished), updated_at = VALUES(updated_at)`,
+		userID, courseID, p.LessonID, p.PositionSec, finished, p.UpdatedAt.UTC())
+	return err
+}
+
+func (s *mysqlStore) TrimCourseProgress(ctx context.Context, courseID string, keep map[string]bool) error {
+	if keep == nil {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM course_progress WHERE course_id = ?`, courseID)
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id, lesson_id, finished FROM course_progress WHERE course_id = ?`, courseID)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		user, lesson string
+		finished     []string
+	}
+	var all []row
+	for rows.Next() {
+		var r row
+		var raw []byte
+		if err := rows.Scan(&r.user, &r.lesson, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		_ = json.Unmarshal(raw, &r.finished)
+		all = append(all, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range all {
+		if !keep[r.lesson] {
+			if _, err := s.db.ExecContext(ctx, `DELETE FROM course_progress WHERE user_id = ? AND course_id = ?`, r.user, courseID); err != nil {
+				return err
+			}
+			continue
+		}
+		finished, _ := json.Marshal(keepOnly(r.finished, keep))
+		if _, err := s.db.ExecContext(ctx, `UPDATE course_progress SET finished = ? WHERE user_id = ? AND course_id = ?`,
+			finished, r.user, courseID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *mysqlStore) PaidPayouts(ctx context.Context) ([]Payout, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT data FROM teacher_payouts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Payout
+	for rows.Next() {
+		var raw []byte
+		var p Payout
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *mysqlStore) InsertPaidPayout(ctx context.Context, p Payout, paidAt time.Time) error {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO teacher_payouts (teacher_id, month, data, paid_at) VALUES (?, ?, ?, ?)`,
+		p.TeacherID, p.Month, data, paidAt.UTC())
+	if isDuplicate(err) {
+		return ErrStale
+	}
 	return err
 }

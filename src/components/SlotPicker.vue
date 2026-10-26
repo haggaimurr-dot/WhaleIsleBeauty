@@ -9,7 +9,8 @@
         :class="{ 'artist--on': a.id === artistId }"
         @tap="selectArtist(a.id)"
       >
-        <ArchImage class="artist__avatar" :src="a.avatar" />
+        <!-- 组件里的 ArchImage 拿不到这里的 class 样式（样式隔离），尺寸放在外层 -->
+        <view class="artist__avatar"><ArchImage :src="a.avatar" fill /></view>
         <view>{{ a.name }}</view>
         <view class="artist__desc">{{ artistDesc(a) }}</view>
       </view>

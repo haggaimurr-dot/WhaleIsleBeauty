@@ -19,6 +19,14 @@
           <view class="days">
             <DayPicker :model-value="date" :dates="dates" @update:model-value="changeDate" />
           </view>
+          <!-- 替客人改期：放在头部，换日子、滚动表格时一直看得到 -->
+          <view v-if="moving" class="moving">
+            <view class="moving__text">
+              <view class="moving__title">给 {{ moving.booking.customerName }} 改期</view>
+              原来是 {{ moving.whenText }}，点一个空闲的格子，也可以换一天
+            </view>
+            <AppButton variant="ghost" size="sm" @click="moving = undefined">不改了</AppButton>
+          </view>
         </template>
       </template>
 
@@ -28,8 +36,18 @@
       </view>
 
       <template v-else>
+        <!-- 预约变动提醒：微信只给一次性订阅，点一次攒一条；确认预约时也会顺手续一条 -->
+        <view v-if="quota !== undefined" class="notify" :class="{ 'notify--empty': quota === 0 }">
+          <view class="notify__text">
+            <view class="notify__title">{{ quota ? `新预约提醒还能收 ${quota} 条` : '新预约提醒用完了' }}</view>
+            {{ quota ? '客人付定金、改期、取消都会发到微信' : '续上之前，有新预约微信不会通知你' }}
+          </view>
+          <AppButton variant="ghost" size="sm" @click="addQuota">{{ quota ? '多收一条' : '续上提醒' }}</AppButton>
+        </view>
+
         <!-- 循环变量别用单字母：uni-app 编译后的数据键也是单字母，会撞上（之前 p 撞了 dateText，提醒条渲染不出来） -->
-        <view v-for="pend in pendings" :key="pend.booking.id" class="pending">
+        <!-- 改期挑格子时先收起，免得和上面的提示条抢注意力 -->
+        <view v-for="pend in (moving ? [] : pendings)" :key="pend.booking.id" class="pending">
           <view class="pending__text">
             <view class="pending__name">新预约：{{ pend.booking.customerName }}</view>
             {{ dateText }} {{ pend.time }}　{{ pend.artistName }}　{{ pend.booking.serviceName }}　定金已付
@@ -48,15 +66,19 @@
               v-for="c in row.cells"
               :key="c.artistId"
               class="cell"
-              :class="[`cell--${cellTone(c)}`, { 'cell--busy': busyKey === cellKey(c) }]"
+              :class="[`cell--${cellTone(c)}`, {
+                'cell--busy': busyKey === cellKey(c),
+                'cell--target': moving && c.state === 'free',
+                'cell--moving': moving && c.booking?.id === moving.booking.id,
+              }]"
               @tap="tapCell(c)"
             >
-              <template v-if="c.state === 'free'">可约</template>
+              <template v-if="c.state === 'free'">{{ moving ? '改到这' : '可约' }}</template>
               <template v-else-if="c.state === 'blocked'">休息</template>
               <template v-else-if="c.state === 'past'">已过</template>
               <template v-else-if="c.booking">
                 <text>{{ c.booking.customerName }}</text>
-                <text class="cell__sub" :class="{ 'cell__sub--alert': c.state === 'booked' && c.booking.alert && c.booking.status !== 'pending_payment' }">
+                <text class="cell__sub" :class="{ 'cell__sub--alert': cellTone(c) === 'booked' && c.booking.alert && c.booking.status !== 'pending_payment' }">
                   {{ cellSub(c) }}
                 </text>
               </template>
@@ -67,7 +89,7 @@
         <view class="legend">
           <view class="legend__item"><text class="legend__dot legend__dot--booked" />已约</view>
           <view class="legend__item"><text class="legend__dot legend__dot--pending" />待确认</view>
-          <view class="legend__item"><text class="legend__dot legend__dot--free" />空闲，点一下设为休息</view>
+          <view class="legend__item"><text class="legend__dot legend__dot--free" />{{ moving ? '空闲，点一下改到这里' : '空闲，点一下设为休息' }}</view>
           <view class="legend__item"><text class="legend__dot legend__dot--blocked" />休息</view>
           <view v-if="hasPast" class="legend__item"><text class="legend__dot legend__dot--past" />已过去，不能再改</view>
         </view>
@@ -82,7 +104,7 @@
             <view class="detail__name">{{ detail.booking.customerName }}</view>
             <view class="detail__when">{{ detailWhen }}</view>
           </view>
-          <StatusBadge :status="detail.booking.status" />
+          <StatusBadge :status="detail.booking.status" :label="detail.booking.status === 'cancelled' ? '没来' : undefined" />
         </view>
 
         <view class="detail__rows">
@@ -92,6 +114,9 @@
           </view>
           <view class="detail__row">
             <text class="detail__k">这次肤质</text>{{ detail.booking.skinType ? SKIN_LABEL[detail.booking.skinType] : '没选' }}
+          </view>
+          <view v-if="detail.booking.courseTitle" class="detail__row">
+            <text class="detail__k">从课程来</text>《{{ detail.booking.courseTitle }}》
           </view>
         </view>
 
@@ -110,11 +135,34 @@
 
         <view v-if="detailHint" class="detail__hint">{{ detailHint }}</view>
         <view class="detail__acts">
-          <AppButton variant="ghost" class="detail__btn" @click="sheetOpen = false">关闭</AppButton>
+          <!-- 客人电话里说要改：替 TA 改期、取消。只有“确认”是主按钮 -->
+          <template v-if="detail.booking.canChange">
+            <AppButton variant="ghost" class="detail__btn" :disabled="!!busyKey" @click="startMove">改期</AppButton>
+            <AppButton
+              variant="ghost"
+              class="detail__btn"
+              :loading="busyKey === detail.booking.id && busyAction === 'cancel'"
+              loading-text="取消中…"
+              @click="cancelForCustomer"
+            >
+              取消预约
+            </AppButton>
+          </template>
+          <AppButton v-else variant="ghost" class="detail__btn" @click="sheetOpen = false">关闭</AppButton>
+          <AppButton
+            v-if="detail.booking.canMarkNoShow"
+            variant="ghost"
+            class="detail__btn"
+            :loading="busyKey === detail.booking.id && busyAction === 'noshow'"
+            loading-text="标记中…"
+            @click="markNoShow"
+          >
+            客人没来
+          </AppButton>
           <AppButton
             v-if="detail.booking.canConfirm"
             class="detail__btn"
-            :loading="busyKey === detail.booking.id"
+            :loading="busyKey === detail.booking.id && busyAction === 'confirm'"
             loading-text="确认中…"
             @click="confirmInSheet"
           >
@@ -128,18 +176,19 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import {
   api, errorText, ApiError,
   type DateStr, type DaySchedule, type ID, type OwnerBookingBrief, type ScheduleCell, type TimeStr,
   OCCASION_LABEL, SKIN_LABEL, TONE_LABEL,
 } from '@/api'
-import { addMinutes, formatDateCN } from '@/utils/date'
+import { addMinutes, formatDateCN, formatMonthDay } from '@/utils/date'
 import AppButton from '@/components/AppButton.vue'
 import BottomSheet from '@/components/BottomSheet.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DayPicker from '@/components/DayPicker.vue'
 import PageLayout from '@/components/PageLayout.vue'
+import { OWNER_SUBSCRIBE_READY, requestOwnerSubscribe } from '@/utils/subscribe'
 
 const layout = ref<InstanceType<typeof PageLayout>>()
 const dates = ref<DateStr[]>([])
@@ -175,6 +224,8 @@ const pendings = computed(() =>
 )
 
 function cellTone(c: ScheduleCell) {
+  // 标记了没来的预约还留在格子里（方便对账），样子接近“已过”
+  if (c.booking?.status === 'cancelled') return 'noshow'
   if (c.state === 'booked' && c.booking && confirmedHere.value.has(c.booking.id)) return 'ok'
   return c.state
 }
@@ -184,6 +235,8 @@ function cellSub(c: ScheduleCell) {
   if (!b) return ''
   if (c.state === 'pending') return b.canConfirm ? '待确认' : '已过时，未确认'
   if (b.status === 'pending_payment') return '待付定金'
+  if (b.status === 'cancelled') return '没来'
+  if (b.status === 'completed') return '已完成'
   if (cellTone(c) === 'ok') return '已确认'
   return b.alert ?? b.serviceName
 }
@@ -196,8 +249,9 @@ async function load() {
   try {
     if (!dates.value.length) {
       dates.value = await api.listScheduleDates()
-      date.value = dates.value[0]
+      date.value = dates.value.includes(wantDate as DateStr) ? wantDate : dates.value[0]
     }
+    loadQuota()
     if (!date.value) return
     const s = await api.getDaySchedule(date.value)
     if (mine !== seq) return
@@ -211,8 +265,45 @@ async function load() {
   }
 }
 
+// 从提醒消息点进来时带 ?date=，直接看那一天
+let wantDate: DateStr | undefined
+onLoad(q => { wantDate = q?.date })
+
 // 从“我的”回来或客人刚下了单，都重新拉一次
 onShow(load)
+
+// ---------- 预约变动提醒 ----------
+
+/** 还能收几条提醒；模板没配或者没拉到时为 undefined，不显示 */
+const quota = ref<number>()
+
+async function loadQuota() {
+  if (!OWNER_SUBSCRIBE_READY) return
+  try {
+    quota.value = (await api.getOwnerNotify()).quota
+  } catch {
+    // 额度拉不到不影响排班，下次进来再拉
+  }
+}
+
+/** 必须在点击里同步发起订阅，前面不能有 await */
+function subscribeOnce() {
+  if (!OWNER_SUBSCRIBE_READY) return Promise.resolve(false)
+  return requestOwnerSubscribe().then(async ok => {
+    if (!ok) return false
+    try {
+      quota.value = (await api.addOwnerNotify(1)).quota
+      return true
+    } catch {
+      return false
+    }
+  })
+}
+
+async function addQuota() {
+  const ok = await subscribeOnce()
+  toast(ok ? '好了，又能多收一条' : '没有同意，这次没加上')
+}
 
 function changeDate(d: DateStr) {
   date.value = d
@@ -224,32 +315,54 @@ function changeDate(d: DateStr) {
 // ---------- 操作 ----------
 
 const busyKey = ref<string>()
+/** 同一条预约在详情里有好几个按钮，loading 只转正在做的那个 */
+type BusyAction = 'confirm' | 'cancel' | 'noshow' | 'move'
+const busyAction = ref<BusyAction>()
 const toast = (title: string) => uni.showToast({ title, icon: 'none', duration: 2000 })
 
-async function run(key: string, action: () => Promise<unknown>, done: string) {
-  if (busyKey.value) return
+/** 成功返回 true；失败时提示原因 */
+async function run(key: string, action: () => Promise<unknown>, done: string, tag?: BusyAction) {
+  if (busyKey.value) return false
   busyKey.value = key
+  busyAction.value = tag
+  let ok = false
   try {
     await action()
     toast(done)
+    ok = true
   } catch (e) {
     toast(errorText(e))
   } finally {
     busyKey.value = undefined
+    busyAction.value = undefined
     await load()
   }
+  return ok
 }
 
 function confirm(b: OwnerBookingBrief) {
+  if (!busyKey.value) subscribeOnce() // 顺手续一条，不等结果，同不同意都不影响确认
   return run(b.id, async () => {
     await api.confirmBooking(b.id)
     confirmedHere.value.add(b.id)
-  }, '已确认，已通知客人')
+  }, '已确认，已通知客人', 'confirm')
+}
+
+/** 弹窗问一句，点了确认按钮才往下走 */
+function ask(title: string, content: string, confirmText: string) {
+  return new Promise<boolean>(resolve => {
+    uni.showModal({
+      title, content, confirmText, cancelText: '再想想', confirmColor: '#6E5446',
+      success: r => resolve(r.confirm),
+      fail: () => resolve(false),
+    })
+  })
 }
 
 function tapCell(c: ScheduleCell) {
   const d = date.value
   if (!d) return
+  if (moving.value) return pickMoveTarget(c, d)
   const who = `${artistName(c.artistId)} ${c.time}`
   switch (c.state) {
     case 'free':
@@ -299,6 +412,9 @@ const detailHint = computed(() => {
   if (!b) return ''
   if (b.status === 'pending_payment') return '刚下单，还没付定金。15 分钟内没付会自动放出来'
   if (b.status === 'pending_confirm' && !b.canConfirm) return '预约时间已经过了，不能再确认'
+  if (b.status === 'cancelled') return '客人这次没来，定金已经原路退回'
+  if (b.canMarkNoShow) return '客人没来的话点「客人没来」，定金会原路退回。只能今天标记，标了不能撤销'
+  if (b.canChange) return '客人电话里说要改时间或不来了，可以替 TA 改期、取消，不受 24 小时限制'
   return ''
 })
 
@@ -307,6 +423,73 @@ async function confirmInSheet() {
   if (!b) return
   await confirm(b)
   sheetOpen.value = false
+}
+
+/** 还没付定金的不用提钱；付过的说清楚会退 */
+const refundText = (b: OwnerBookingBrief) =>
+  b.status === 'pending_payment' ? '客人还没付定金。' : '定金会原路退回给客人。'
+
+async function cancelForCustomer() {
+  const d = detail.value
+  if (!d || busyKey.value) return
+  const b = d.booking
+  const yes = await ask(
+    `取消${b.customerName}的预约？`,
+    `${detailWhen.value}，${b.serviceName}。${refundText(b)}取消后这个时段会放出来。`,
+    '取消预约',
+  )
+  if (!yes) return
+  const done = b.status === 'pending_payment' ? '已取消预约' : '已取消预约，定金原路退回'
+  if (await run(b.id, () => api.ownerCancelBooking(b.id), done, 'cancel')) sheetOpen.value = false
+}
+
+async function markNoShow() {
+  const d = detail.value
+  if (!d || busyKey.value) return
+  const b = d.booking
+  const yes = await ask(
+    `${b.customerName}这次没来？`,
+    `${detailWhen.value}。标记后记为没来，${refundText(b)}标了不能撤销。`,
+    '标记没来',
+  )
+  if (!yes) return
+  if (await run(b.id, () => api.markNoShow(b.id), '已记为没来，定金原路退回', 'noshow')) sheetOpen.value = false
+}
+
+// ---------- 替客人改期：关掉详情，在表格里点一个空闲格子 ----------
+
+const moving = ref<{ booking: OwnerBookingBrief; whenText: string }>()
+
+function startMove() {
+  const d = detail.value
+  if (!d || !date.value) return
+  moving.value = { booking: d.booking, whenText: `${formatMonthDay(date.value)} ${d.time} ${artistName(d.artistId)}` }
+  sheetOpen.value = false
+}
+
+async function pickMoveTarget(c: ScheduleCell, d: DateStr) {
+  const m = moving.value
+  if (!m || busyKey.value) return
+  if (c.booking?.id === m.booking.id) return toast('这是原来的时间，换一个空闲的格子')
+  if (c.state !== 'free') return toast('这个格子不空，选一个写着“改到这”的')
+  const paid = m.booking.status !== 'pending_payment'
+  const yes = await ask(
+    '改到这个时间？',
+    `${m.booking.customerName}：${m.whenText} → ${formatMonthDay(d)} ${c.time} ${artistName(c.artistId)}。`
+      + (paid ? '改完直接算店里已确认，客人订阅过会收到微信通知。' : '客人还没付定金，改完仍要按时付。'),
+    '改到这里',
+  )
+  if (!yes) return
+  const ok = await run(
+    cellKey(c),
+    async () => {
+      const b = await api.ownerRescheduleBooking(m.booking.id, { artistId: c.artistId, date: d, time: c.time })
+      if (b.status === 'confirmed') confirmedHere.value.add(b.id)
+    },
+    `已改到 ${formatMonthDay(d)} ${c.time}`,
+    'move',
+  )
+  if (ok) moving.value = undefined
 }
 </script>
 
@@ -362,6 +545,30 @@ async function confirmInSheet() {
   }
 }
 
+.moving {
+  display: flex;
+  align-items: center;
+  gap: $gap;
+  margin: 0 $page-x 16rpx;
+  padding: 24rpx 28rpx;
+  border-radius: $r-card;
+  background: $blush;
+
+  &__text {
+    flex: 1;
+    min-width: 0;
+    font-size: $fs-caption;
+    line-height: 1.6;
+    color: $blush-ink;
+  }
+
+  &__title {
+    font-size: $fs-small;
+    font-weight: 600;
+    color: $ink;
+  }
+}
+
 .pending {
   display: flex;
   align-items: center;
@@ -383,6 +590,35 @@ async function confirmInSheet() {
     font-size: $fs-body;
     font-weight: 600;
     color: $ink;
+  }
+}
+
+.notify {
+  display: flex;
+  align-items: center;
+  gap: $gap;
+  margin: 8rpx $page-x 20rpx;
+  padding: 24rpx 28rpx;
+  border: 1rpx solid $hair;
+  border-radius: $r-card;
+  background: $card;
+
+  &__text {
+    flex: 1;
+    min-width: 0;
+    font-size: $fs-caption;
+    line-height: 1.6;
+    color: $mute;
+  }
+
+  &__title {
+    font-size: $fs-small;
+    font-weight: 600;
+    color: $ink;
+  }
+
+  &--empty &__title {
+    color: $mocha;
   }
 }
 
@@ -476,6 +712,28 @@ async function confirmInSheet() {
   &--past {
     align-items: center;
     color: $disabled;
+  }
+
+  // 没来：留着名字方便对账，颜色和“已过”一样淡
+  &--noshow {
+    color: $disabled;
+    box-shadow: inset 0 0 0 2rpx $hair;
+
+    .cell__sub {
+      color: $disabled;
+    }
+  }
+
+  // 改期时可以点的空格子
+  &--target {
+    color: $blush-ink;
+    background: $card;
+    box-shadow: inset 0 0 0 2rpx $rose;
+  }
+
+  // 改期时原来的那一格
+  &--moving {
+    box-shadow: inset 0 0 0 3rpx $mocha;
   }
 
   &--busy {

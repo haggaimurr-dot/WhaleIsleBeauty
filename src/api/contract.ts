@@ -1,7 +1,7 @@
 import type {
-  Artist, Booking, CreateBookingReq, CreateBookingResp, DateStr, DaySchedule,
-  ID, Me, RescheduleReq, Service, Shop, SkinProfile, SlotView, StyleCategory, TimeStr,
-  UpdateSkinProfileReq, Work,
+  Artist, ArtistInput, Booking, Course, CourseInput, CourseProgress, CourseSummary, CreateBookingReq, CreateBookingResp, DateStr, DaySchedule,
+  ID, Me, MonthStats, MyTeaching, Payout, SaveProgressReq, Teacher, TeacherInput, TeacherInvite, OwnerNotifyStatus, Product, ProductCategory, ProductInput, RescheduleReq, Service, ServiceInput, Shop, SkinProfile, SlotView, StyleCategory, TimeStr,
+  UpdateSkinProfileReq, Work, WorkInput,
 } from './types'
 
 /**
@@ -40,16 +40,21 @@ export interface Api {
   // ---------- 基础资料 ----------
   /** GET /artists */
   listArtists(): Promise<Artist[]>
-  /** GET /services */
+  /** GET /services  不含已下架的 */
   listServices(): Promise<Service[]>
-  /** GET /services/:id */
+  /** GET /services/:id  已下架的也返回（带 hidden: true），分享出去的详情页还能打开 */
   getService(id: ID): Promise<Service>
-  /** GET /works?category= */
+  /** GET /works?category=  最新的在前。关联的项目已下架时不返回 serviceId，“预约同款”就不预选项目 */
   listWorks(category?: StyleCategory): Promise<Work[]>
   /** GET /dates  可预约的日期（从明天起），后端可据此处理节假日或闭店 */
   listBookableDates(): Promise<DateStr[]>
   /** GET /shop  门店信息 */
   getShop(): Promise<Shop>
+  /**
+   * GET /products?category=  店里用的化妆品。按类别排（PRODUCT_CATEGORY_LABEL 的顺序），
+   * 同一类里先加的在前。店主维护也用这个接口
+   */
+  listProducts(category?: ProductCategory): Promise<Product[]>
 
   // ---------- 预约（客人端） ----------
   /**
@@ -80,7 +85,10 @@ export interface Api {
    * 已超过 payDeadline 或状态不是 pending_payment 时返回 INVALID_STATE
    */
   resumePayment(id: ID): Promise<CreateBookingResp>
-  /** POST /bookings/:id/cancel  距离开始不足 24 小时返回 CANCEL_TOO_LATE（pending_payment 不受限制） */
+  /**
+   * POST /bookings/:id/cancel  距离开始不足 24 小时返回 CANCEL_TOO_LATE（pending_payment 不受限制）。
+   * 付过定金的同时发起退款，返回的 booking 带 refund；之后退款进度在 listMyBookings('past') 里看
+   */
   cancelBooking(id: ID): Promise<Booking>
   /** POST /bookings/:id/reschedule  同样受 24 小时规则限制，改期后回到 pending_confirm（还没付定金的仍是 pending_payment）。到店提醒按新时间发 */
   rescheduleBooking(id: ID, req: RescheduleReq): Promise<Booking>
@@ -89,6 +97,7 @@ export interface Api {
   // - pending_payment 过了 payDeadline → cancelled，cancelReason = pay_timeout
   // - pending_confirm 到了开始时间还没确认 → cancelled，cancelReason = not_confirmed，定金原路退回
   //   不发订阅消息（没有对应模板），客人在「已完成」里看到原因。排班里 stats.stale 因此通常为 0，只在定时任务跑之前短暂出现
+  // - confirmed 过了结束时间（开始时间 + durationMin）→ completed。契约里没有“到店完成”的接口，没来的由店主当天标记（markNoShow）
 
   // ---------- 排班（店主端，需要 owner 角色） ----------
   /** GET /owner/dates  排班可查看的日期（从今天起），和客人端的 /dates 不同，包含今天 */
@@ -100,8 +109,161 @@ export interface Api {
   getDaySchedule(date: DateStr): Promise<DaySchedule>
   /** POST /owner/bookings/:id/confirm  确认后给客人发订阅消息。开始时间已过返回 INVALID_STATE */
   confirmBooking(id: ID): Promise<Booking>
+  /**
+   * POST /owner/bookings/:id/cancel  店主替客人取消（客人打电话来说不来了）。
+   * 不受 24 小时限制；开始时间已过或预约已结束返回 INVALID_STATE。付过的定金原路退回，cancelReason 记为 customer。
+   * 不给客人和店主发提醒
+   */
+  ownerCancelBooking(id: ID): Promise<Booking>
+  /**
+   * POST /owner/bookings/:id/reschedule  店主替客人改期，body 同 RescheduleReq。
+   * 不受 24 小时限制，可以改到排班能看的任何一天（含今天）；新时段已过去、设了休息或有预约返回 SLOT_TAKEN。
+   * 店里和客人已经说好了，付过定金的改完直接是 confirmed，并按新时间给客人发预约确认；还没付的仍是 pending_payment
+   */
+  ownerRescheduleBooking(id: ID, req: RescheduleReq): Promise<Booking>
+  /**
+   * POST /owner/bookings/:id/no-show  客人没来。只能在预约当天、开始时间之后标记，
+   * 状态是 confirmed 或 completed（过了结束时间已经自动完成）才行，否则返回 INVALID_STATE。
+   * 标记后 cancelled，cancelReason = no_show，定金原路退回；不能撤销
+   */
+  markNoShow(id: ID): Promise<Booking>
   /** PUT /owner/blocks  body: { artistId, date, time }  时段已过去或已有预约返回 INVALID_STATE */
   blockSlot(artistId: ID, date: DateStr, time: TimeStr): Promise<void>
   /** DELETE /owner/blocks  body: { artistId, date, time }  时段已过去返回 INVALID_STATE */
   unblockSlot(artistId: ID, date: DateStr, time: TimeStr): Promise<void>
+
+  // ---------- 通知店主（店主端，需要 owner 角色） ----------
+  // 客人付完定金、改期、取消（只算付过定金的）时，后端给每位店主发一条订阅消息“预约变动提醒”，
+  // 模板和字段见 utils/subscribe.ts 的 owner。一次性订阅，每发一条用掉该店主一次额度，额度为 0 就不发。
+  // 发不出去不影响客人的操作。
+
+  /** GET /owner/notify  还能收到几条提醒 */
+  getOwnerNotify(): Promise<OwnerNotifyStatus>
+  /**
+   * POST /owner/notify  body: { count }  店主在小程序里同意了 count 次订阅，加到额度上，返回新的额度。
+   * count 必须是 1–5 的整数，否则返回 400 UNKNOWN
+   */
+  addOwnerNotify(count: number): Promise<OwnerNotifyStatus>
+
+  // ---------- 经营统计（店主端，需要 owner 角色） ----------
+  /**
+   * GET /owner/stats  最近 6 个月（含本月）的月度汇总，本月在前。没有预约的月份各项为 0。
+   * 统计口径见 types.ts 的 MonthStats
+   */
+  listMonthStats(): Promise<MonthStats[]>
+
+  // ---------- 资料维护（店主端，需要 owner 角色） ----------
+  // 提交的内容整份替换，字段限制见 catalog.ts 的 validateXxx，前后端用同一套规则；不符合返回 400 UNKNOWN，message 说明哪里不对。
+  // 已有预约里存的是下单时的项目名、价格、定金、时长和化妆师名，改资料不影响已经下的单。
+  // 图片字段演示阶段只用 placeholder:g1–g6，以后接云存储再放 fileID / URL。
+
+  /** PUT /owner/shop  返回保存后的门店信息 */
+  updateShop(shop: Shop): Promise<Shop>
+
+  /** POST /owner/artists  新的排在最后 */
+  createArtist(req: ArtistInput): Promise<Artist>
+  /** PUT /owner/artists/:id */
+  updateArtist(id: ID, req: ArtistInput): Promise<Artist>
+  /**
+   * DELETE /owner/artists/:id  以下情况返回 INVALID_STATE，message 说明原因：
+   * 还有没结束的预约；名下还有作品或课程（先改给别人或删掉）；只剩这一位
+   */
+  deleteArtist(id: ID): Promise<void>
+
+  /** GET /owner/services  含已下架的，顺序和客人端一致 */
+  listOwnerServices(): Promise<Service[]>
+  /** POST /owner/services  新的排在最后。下架也走 update（hidden: true）；不能把最后一个在接预约的项目下架 */
+  createService(req: ServiceInput): Promise<Service>
+  /** PUT /owner/services/:id  改价只影响之后的新预约 */
+  updateService(id: ID, req: ServiceInput): Promise<Service>
+  /**
+   * DELETE /owner/services/:id  还有没结束的预约、或者是最后一个在接预约的项目时返回 INVALID_STATE。
+   * 删掉后关联它的作品和课程不再带 serviceId
+   */
+  deleteService(id: ID): Promise<void>
+
+  /** GET /owner/works  全部作品，最新的在前；和客人端不同，下架项目的 serviceId 照常返回 */
+  listOwnerWorks(): Promise<Work[]>
+  /** POST /owner/works  新的排在最前 */
+  createWork(req: WorkInput): Promise<Work>
+  /** PUT /owner/works/:id */
+  updateWork(id: ID, req: WorkInput): Promise<Work>
+  /** DELETE /owner/works/:id */
+  deleteWork(id: ID): Promise<void>
+
+  /** POST /owner/products  排在同类的最后 */
+  createProduct(req: ProductInput): Promise<Product>
+  /** PUT /owner/products/:id  顺序不变（换了类别就按原来加的先后排进新类别） */
+  updateProduct(id: ID, req: ProductInput): Promise<Product>
+  /** DELETE /owner/products/:id  可以删光，客人那边显示“清单还在整理”。课程里用到它的地方一起去掉 */
+  deleteProduct(id: ID): Promise<void>
+
+  // ---------- 课堂（客人端） ----------
+  // 规则见 types.ts 的“课堂”一节。课程列表和详情是公开资料，朋友圈单页模式不登录也能看
+
+  /** GET /courses?category=  不含已下架的，新的在前 */
+  listCourses(category?: StyleCategory): Promise<CourseSummary[]>
+  /**
+   * GET /courses/:id  已下架的返回 NOT_FOUND（顾客讲师结束合作后，TA 出镜的视频不能再给人看）。
+   * 已登录时带 progress；项目下架时不带 serviceId
+   */
+  getCourse(id: ID): Promise<Course>
+  /**
+   * PUT /courses/:id/progress  记录看到哪了，返回最新进度。播放时每 15 秒、暂停、切小节、离开页面时调一次。
+   * positionSec 超过时长按时长算，离结尾不到 5 秒算看完这一节。课已下架或小节不在这门课里返回 NOT_FOUND
+   */
+  saveCourseProgress(courseId: ID, req: SaveProgressReq): Promise<CourseProgress>
+
+  // ---------- 讲师（顾客端） ----------
+  /** GET /teacher-invites/:code  邀请不存在、已经用过或店主结束了返回 NOT_FOUND */
+  getTeacherInvite(code: string): Promise<TeacherInvite>
+  /**
+   * POST /teacher-invites/:code/accept  body: { agreementVersion }  客人确认授权，成为讲师，Me.teacherId 指向 TA。
+   * 版本不是当前的返回 INVALID_STATE（说明改过了，重新看一遍）；已经是合作中的讲师返回 INVALID_STATE；邀请失效返回 NOT_FOUND
+   */
+  acceptTeacherInvite(code: string, agreementVersion: string): Promise<Teacher>
+  /** GET /me/teaching  我的课和分成。不是讲师返回 NOT_FOUND */
+  getMyTeaching(): Promise<MyTeaching>
+  /**
+   * POST /me/teaching/quit  客人自己结束合作，效果和店主结束一样：TA 的课全部下架，以后从这些课来的预约不再分成，
+   * 已经下了的单到店完成后照常分。不是合作中返回 INVALID_STATE
+   */
+  quitTeaching(): Promise<Teacher>
+
+  // ---------- 课堂（店主端，需要 owner 角色） ----------
+  // 字段规则见 catalog.ts 的 validateCourse / validateTeacher，不符合返回 400 UNKNOWN。
+  // 视频由前端用 wx.cloud.uploadFile 传到云托管对象存储，拿到 fileID 填进 Lesson.video；演示阶段用 placeholder:v1–v3。
+
+  /** GET /owner/courses  全部课程，含已下架的，新的在前 */
+  listOwnerCourses(): Promise<CourseSummary[]>
+  /** GET /owner/courses/:id  编辑用，下架的也返回，项目下架时照常带 serviceId，不带 progress */
+  getOwnerCourse(id: ID): Promise<Course>
+  /**
+   * POST /owner/courses  新的排在最前。化妆师、讲师、项目、化妆品不存在返回 UNKNOWN；
+   * 讲师不是合作中时不能上架（hidden 必须为 true）
+   */
+  createCourse(req: CourseInput): Promise<Course>
+  /** PUT /owner/courses/:id  带 id 的小节必须是这门课原来的，否则返回 UNKNOWN */
+  updateCourse(id: ID, req: CourseInput): Promise<Course>
+  /** DELETE /owner/courses/:id  观看记录一起删；已经记下的分成不受影响 */
+  deleteCourse(id: ID): Promise<void>
+
+  /** GET /owner/teachers  先加的在前 */
+  listTeachers(): Promise<Teacher[]>
+  /** POST /owner/teachers  新讲师是 invited，带 inviteCode */
+  createTeacher(req: TeacherInput): Promise<Teacher>
+  /** PUT /owner/teachers/:id  客人确认过（active / ended）后改分成比例返回 INVALID_STATE */
+  updateTeacher(id: ID, req: TeacherInput): Promise<Teacher>
+  /** POST /owner/teachers/:id/end  结束合作（invited 的就是收回邀请），TA 的课全部下架。已经结束返回 INVALID_STATE */
+  endTeacher(id: ID): Promise<Teacher>
+  /** DELETE /owner/teachers/:id  只能删还没确认、也没有课的；确认过的只能结束合作，返回 INVALID_STATE */
+  deleteTeacher(id: ID): Promise<void>
+
+  /** GET /owner/payouts  最近 6 个月（含本月）每位讲师每月的分成，只返回有分成的，月份新的在前、同月按讲师先后 */
+  listPayouts(): Promise<Payout[]>
+  /**
+   * POST /owner/payouts/:teacherId/:month/paid  线下打完款后标记。
+   * 月份还没过完、这个月没有分成、已经标记过都返回 INVALID_STATE；讲师不存在返回 NOT_FOUND
+   */
+  markPayoutPaid(teacherId: ID, month: string): Promise<Payout>
 }

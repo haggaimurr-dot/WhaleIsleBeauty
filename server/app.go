@@ -79,6 +79,8 @@ type App struct {
 	fakePay bool            // 还没有商户号：不调微信支付，由 /fake-paid 模拟回调
 	// fakePayers 能调 /fake-paid 的 openid（店主 + 测试人员）。别的客人调会被拒绝，防止不付钱就约上
 	fakePayers map[string]bool
+	notifier   Notifier // 发订阅消息；nil 时不发
+	cronToken  string   // 外部定时器调 /cron/reminders 用的口令；空表示不开放
 }
 
 func newID(prefix string) string {
@@ -146,6 +148,7 @@ func (a *App) out(b *BookingRow) Booking {
 	if b.Status == StatusPendingPayment && b.PayDeadline != nil {
 		o.PayDeadline = ts(*b.PayDeadline)
 	}
+	o.Refund = a.refundView(b)
 	return o
 }
 
@@ -177,17 +180,41 @@ func (a *App) Sweep(ctx context.Context) error {
 	return nil
 }
 
-// refund 定金原路退回。假支付模式下只记下退款时间
+// fakeRefundDelay 假支付模式下退款多久“到账”。真实的微信零钱一般几分钟，留一会儿让客人能看到“退款中”
+const fakeRefundDelay = 2 * time.Minute
+
+// refund 定金原路退回。假支付模式下不调微信，只记下发起时间和预计到账时间
 func (a *App) refund(b *BookingRow, now time.Time) {
-	if b.PaidAt == nil || b.RefundedAt != nil {
+	if b.PaidAt == nil || b.RefundRequestedAt != nil || b.RefundedAt != nil {
 		return
 	}
+	b.RefundRequestedAt = &now
 	if !a.fakePay {
-		// TODO: 接微信支付后在这里调退款接口
+		// TODO: 接微信支付后在这里调退款接口，到账时间由退款回调写入 RefundedAt
 		log.Printf("refund needed: booking=%s deposit=%d", b.ID, b.Deposit)
 		return
 	}
-	b.RefundedAt = &now
+	done := now.Add(fakeRefundDelay)
+	b.RefundedAt = &done
+}
+
+// refundView 退款进度：RefundedAt 到了才算到账
+func (a *App) refundView(b *BookingRow) *Refund {
+	if b.Status != StatusCancelled || b.PaidAt == nil {
+		return nil
+	}
+	start := b.RefundRequestedAt
+	if start == nil {
+		start = b.RefundedAt // 加 refund_requested_at 之前退的，只记了到账时间
+	}
+	if start == nil {
+		return nil
+	}
+	r := &Refund{Amount: b.Deposit, Status: "processing", CreatedAt: ts(*start)}
+	if b.RefundedAt != nil && !b.RefundedAt.After(a.now()) {
+		r.Status, r.SucceededAt = "succeeded", ts(*b.RefundedAt)
+	}
+	return r
 }
 
 // ---------- 用户 ----------
@@ -264,7 +291,15 @@ func (a *App) Me(ctx context.Context, u *User) (Me, error) {
 	if a.owners[u.OpenID] {
 		role = "owner"
 	}
-	return Me{ID: u.ID, Nickname: u.Nickname, Avatar: u.Avatar, Role: role, VisitCount: n, SkinProfile: skinSummary(u.Skin)}, nil
+	m := Me{ID: u.ID, Nickname: u.Nickname, Avatar: u.Avatar, Role: role, VisitCount: n, SkinProfile: skinSummary(u.Skin)}
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return Me{}, err
+	}
+	if t := c.myTeacher(u.ID); t != nil {
+		m.TeacherID = t.ID
+	}
+	return m, nil
 }
 
 func (a *App) UpdateSkinProfile(ctx context.Context, u *User, req SkinProfile) (SkinProfile, error) {
@@ -288,7 +323,11 @@ func (a *App) UpdateSkinProfile(ctx context.Context, u *User, req SkinProfile) (
 // ---------- 客人端预约 ----------
 
 func (a *App) ListSlots(ctx context.Context, u *User, artistID, date, excludeID string) ([]SlotView, error) {
-	if findArtist(artistID) == nil {
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c.artist(artistID) == nil {
 		return nil, errNotFound
 	}
 	if !validDate(date) {
@@ -340,18 +379,29 @@ func (a *App) takenOn(ctx context.Context, date string) (map[string]*BookingRow,
 }
 
 // checkSlot 客人下单或改期时，这个时段能不能约
-func (a *App) checkSlot(ctx context.Context, artistID, date, t string) (*Artist, error) {
-	artist := findArtist(artistID)
+func (a *App) checkSlot(ctx context.Context, c *Catalog, artistID, date, t string) (*Artist, error) {
+	return a.checkSlotFor(ctx, c, artistID, date, t, false)
+}
+
+// checkSlotFor byOwner 为 true 时是店主替客人改期：排班能看的日子（含今天）都行，提示说清楚是哪种冲突
+func (a *App) checkSlotFor(ctx context.Context, c *Catalog, artistID, date, t string, byOwner bool) (*Artist, error) {
+	artist := c.artist(artistID)
 	if artist == nil {
 		return nil, errNotFound
 	}
 	if !validDate(date) || !isSlotTime(t) {
 		return nil, badRequest("时间格式不对")
 	}
-	if !a.bookable(date) {
+	if byOwner && !contains(a.datesFrom(0, scheduleDays), date) {
+		return nil, apiErr("INVALID_STATE", "这一天还排不到，换一天吧")
+	}
+	if !byOwner && !a.bookable(date) {
 		return nil, apiErr("INVALID_STATE", "这一天现在还不能约，换一天吧")
 	}
 	if a.isPast(date, t) {
+		if byOwner {
+			return nil, apiErr("SLOT_TAKEN", "这个时间已经过去了，换一个吧")
+		}
 		return nil, errSlotTaken
 	}
 	blocks, err := a.store.BlocksOn(ctx, date)
@@ -359,9 +409,21 @@ func (a *App) checkSlot(ctx context.Context, artistID, date, t string) (*Artist,
 		return nil, err
 	}
 	if blocks[artistID+"|"+t] {
+		if byOwner {
+			return nil, apiErr("SLOT_TAKEN", "这个时段设了休息，先恢复可约再改过来")
+		}
 		return nil, errSlotTaken
 	}
 	return artist, nil
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) payParams(b *BookingRow) WxPayParams {
@@ -373,9 +435,16 @@ func (a *App) payParams(b *BookingRow) WxPayParams {
 }
 
 func (a *App) CreateBooking(ctx context.Context, u *User, req CreateBookingReq) (CreateBookingResp, error) {
-	svc := findService(req.ServiceID)
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return CreateBookingResp{}, err
+	}
+	svc := c.service(req.ServiceID)
 	if svc == nil {
 		return CreateBookingResp{}, errNotFound
+	}
+	if svc.Hidden {
+		return CreateBookingResp{}, apiErr("INVALID_STATE", "这个项目暂时不接预约了，看看别的吧")
 	}
 	if req.Occasion != "" && !occasions[req.Occasion] || req.SkinType != "" && !skinTypes[req.SkinType] {
 		return CreateBookingResp{}, badRequest("选项不对")
@@ -384,7 +453,7 @@ func (a *App) CreateBooking(ctx context.Context, u *User, req CreateBookingReq) 
 	if utf8.RuneCountInString(note) > maxTextLength {
 		return CreateBookingResp{}, badRequest("备注写得有点多了，控制在 200 字以内")
 	}
-	artist, err := a.checkSlot(ctx, req.ArtistID, req.Date, req.Time)
+	artist, err := a.checkSlot(ctx, c, req.ArtistID, req.Date, req.Time)
 	if err != nil {
 		return CreateBookingResp{}, err
 	}
@@ -398,6 +467,9 @@ func (a *App) CreateBooking(ctx context.Context, u *User, req CreateBookingReq) 
 		DurationMin: svc.DurationMin, Price: svc.Price, Deposit: svc.Deposit,
 		Status: StatusPendingPayment, Occasion: req.Occasion, SkinType: req.SkinType, Note: note,
 		CreatedAt: now, PayDeadline: &deadline,
+	}
+	if req.CourseID != "" {
+		attribute(c, u, b, req.CourseID)
 	}
 	if err := a.store.InsertBooking(ctx, b); err != nil {
 		if errors.Is(err, ErrSlotTaken) {
@@ -491,6 +563,7 @@ func (a *App) MarkPaid(ctx context.Context, u *User, id string) (Booking, error)
 		}
 		return Booking{}, err
 	}
+	a.notifyOwners(ctx, b, u, ownerNew)
 	return a.out(b), nil
 }
 
@@ -522,6 +595,10 @@ func (a *App) CancelBooking(ctx context.Context, u *User, id string) (Booking, e
 		}
 		return Booking{}, err
 	}
+	// 还没付定金的店主不知道，取消了也不打扰
+	if from != StatusPendingPayment {
+		a.notifyOwners(ctx, b, u, ownerCancelled)
+	}
 	return a.out(b), nil
 }
 
@@ -533,7 +610,11 @@ func (a *App) RescheduleBooking(ctx context.Context, u *User, id string, req Slo
 	if err := a.changeable(b, "改期"); err != nil {
 		return Booking{}, err
 	}
-	artist, err := a.checkSlot(ctx, req.ArtistID, req.Date, req.Time)
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return Booking{}, err
+	}
+	artist, err := a.checkSlot(ctx, c, req.ArtistID, req.Date, req.Time)
 	if err != nil {
 		return Booking{}, err
 	}
@@ -553,6 +634,9 @@ func (a *App) RescheduleBooking(ctx context.Context, u *User, id string, req Slo
 			return Booking{}, errStateMoved
 		}
 		return Booking{}, err
+	}
+	if from != StatusPendingPayment {
+		a.notifyOwners(ctx, b, u, ownerRescheduled)
 	}
 	return a.out(b), nil
 }
@@ -599,7 +683,7 @@ func (a *App) DaySchedule(ctx context.Context, u *User, date string) (DaySchedul
 	if !validDate(date) {
 		return DaySchedule{}, badRequest("日期格式不对")
 	}
-	taken, err := a.takenOn(ctx, date)
+	taken, err := a.scheduledOn(ctx, date)
 	if err != nil {
 		return DaySchedule{}, err
 	}
@@ -615,6 +699,11 @@ func (a *App) DaySchedule(ctx context.Context, u *User, date string) (DaySchedul
 	if err != nil {
 		return DaySchedule{}, err
 	}
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return DaySchedule{}, err
+	}
+	artists := c.Artists
 
 	ds := DaySchedule{Date: date, Times: slotTimes, Cells: []ScheduleCell{}}
 	for _, ar := range artists {
@@ -635,6 +724,8 @@ func (a *App) DaySchedule(ctx context.Context, u *User, date string) (DaySchedul
 					Alert: alert, Note: note,
 					CanConfirm:  b.Status == StatusPendingConfirm && !a.isPast(b.Date, b.Time),
 					DurationMin: b.DurationMin, Occasion: b.Occasion, SkinType: b.SkinType,
+					CanChange: a.ownerCanChange(b), CanMarkNoShow: a.canMarkNoShow(b),
+					CourseTitle: b.CourseTitle,
 				}
 				if hasProfile(customer.Skin) {
 					p := customer.Skin
@@ -651,8 +742,9 @@ func (a *App) DaySchedule(ctx context.Context, u *User, date string) (DaySchedul
 			} else if blocks[key] {
 				cell.State = "blocked"
 			}
-			unpaid := cell.Booking != nil && cell.Booking.Status == StatusPendingPayment
-			if (cell.State == "booked" || cell.State == "pending") && !unpaid {
+			// 待付定金的还没算数，没来的不算当天的预约
+			uncounted := cell.Booking != nil && (cell.Booking.Status == StatusPendingPayment || cell.Booking.Status == StatusCancelled)
+			if (cell.State == "booked" || cell.State == "pending") && !uncounted {
 				ds.Stats.Total++
 			}
 			if cell.State == "pending" {
@@ -693,15 +785,161 @@ func (a *App) ConfirmBooking(ctx context.Context, u *User, id string) (Booking, 
 		}
 		return Booking{}, err
 	}
-	// TODO: 发“预约确认”订阅消息
+	a.notify(ctx, b, noticeConfirmed, a.confirmedMsg)
 	return a.out(b), nil
 }
 
-func (a *App) checkOwnerSlot(u *User, req SlotReq) error {
+// scheduledOn 排班格子里的预约，key 是 artistID|time。同一格子进行中的优先，其次已完成，再次没来
+func (a *App) scheduledOn(ctx context.Context, date string) (map[string]*BookingRow, error) {
+	list, err := a.store.ScheduledBookingsOn(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+	rank := func(b *BookingRow) int {
+		switch {
+		case isActive(b.Status):
+			return 3
+		case b.Status == StatusCompleted:
+			return 2
+		}
+		return 1
+	}
+	m := map[string]*BookingRow{}
+	for _, b := range list {
+		key := b.ArtistID + "|" + b.Time
+		if cur := m[key]; cur == nil || rank(b) > rank(cur) {
+			m[key] = b
+		}
+	}
+	return m, nil
+}
+
+// ownerCanChange 店主能替客人改期、取消：还在进行中，而且没开始
+func (a *App) ownerCanChange(b *BookingRow) bool {
+	return isActive(b.Status) && b.StartAt.After(a.now())
+}
+
+// canMarkNoShow 店主能标记没来：已确认或已完成，开始时间过了，还是预约当天
+func (a *App) canMarkNoShow(b *BookingRow) bool {
+	return (b.Status == StatusConfirmed || b.Status == StatusCompleted) && !b.StartAt.After(a.now()) && b.Date == a.today()
+}
+
+// ownerBooking 店主操作某条预约前的检查
+func (a *App) ownerBooking(ctx context.Context, u *User, id string) (*BookingRow, error) {
 	if err := a.requireOwner(u); err != nil {
+		return nil, err
+	}
+	b, err := a.store.Booking(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil, errNotFound
+	}
+	return b, err
+}
+
+func (a *App) ownerChangeable(b *BookingRow, verb string) error {
+	switch {
+	case !isActive(b.Status):
+		return apiErr("INVALID_STATE", "这个预约已经结束了")
+	case !a.ownerCanChange(b):
+		return apiErr("INVALID_STATE", "预约已经开始了，不能再"+verb)
+	}
+	return nil
+}
+
+// OwnerCancelBooking 店主替客人取消（客人打电话来说不来了）：不受 24 小时限制，定金原路退回，不发提醒
+func (a *App) OwnerCancelBooking(ctx context.Context, u *User, id string) (Booking, error) {
+	b, err := a.ownerBooking(ctx, u, id)
+	if err != nil {
+		return Booking{}, err
+	}
+	if err := a.ownerChangeable(b, "取消"); err != nil {
+		return Booking{}, err
+	}
+	from := b.Status
+	b.Status, b.CancelReason, b.PayDeadline = StatusCancelled, ReasonCustomer, nil
+	a.refund(b, a.now().UTC())
+	if err := a.store.UpdateBooking(ctx, b, from); err != nil {
+		if errors.Is(err, ErrStale) {
+			return Booking{}, errStateMoved
+		}
+		return Booking{}, err
+	}
+	return a.out(b), nil
+}
+
+// OwnerRescheduleBooking 店主替客人改期：不受 24 小时限制，可以改到今天。
+// 店里和客人已经说好了，付过定金的直接算确认，按新时间给客人发预约确认
+func (a *App) OwnerRescheduleBooking(ctx context.Context, u *User, id string, req SlotReq) (Booking, error) {
+	b, err := a.ownerBooking(ctx, u, id)
+	if err != nil {
+		return Booking{}, err
+	}
+	if err := a.ownerChangeable(b, "改期"); err != nil {
+		return Booking{}, err
+	}
+	c, err := a.catalog(ctx)
+	if err != nil {
+		return Booking{}, err
+	}
+	artist, err := a.checkSlotFor(ctx, c, req.ArtistID, req.Date, req.Time, true)
+	if err != nil {
+		return Booking{}, err
+	}
+	from := b.Status
+	start, _ := parseStart(req.Date, req.Time)
+	b.ArtistID, b.ArtistName, b.Date, b.Time = artist.ID, artist.Name, req.Date, req.Time
+	b.StartAt, b.EndAt = start.UTC(), start.Add(time.Duration(b.DurationMin)*time.Minute).UTC()
+	if from != StatusPendingPayment {
+		b.Status = StatusConfirmed
+	}
+	if err := a.store.UpdateBooking(ctx, b, from); err != nil {
+		switch {
+		case errors.Is(err, ErrSlotTaken):
+			return Booking{}, apiErr("SLOT_TAKEN", "这个时间已经有预约了，换一个吧")
+		case errors.Is(err, ErrStale):
+			return Booking{}, errStateMoved
+		}
+		return Booking{}, err
+	}
+	if b.Status == StatusConfirmed {
+		a.notify(ctx, b, noticeConfirmed, a.confirmedMsg)
+	}
+	return a.out(b), nil
+}
+
+// MarkNoShow 客人没来：预约当天、开始以后才能标记，定金原路退回，不能撤销
+func (a *App) MarkNoShow(ctx context.Context, u *User, id string) (Booking, error) {
+	b, err := a.ownerBooking(ctx, u, id)
+	if err != nil {
+		return Booking{}, err
+	}
+	if !a.canMarkNoShow(b) {
+		switch {
+		case b.Status != StatusConfirmed && b.Status != StatusCompleted:
+			return Booking{}, apiErr("INVALID_STATE", "这个预约的状态已经变了")
+		case b.StartAt.After(a.now()):
+			return Booking{}, apiErr("INVALID_STATE", "预约还没开始，不能标记没来")
+		}
+		return Booking{}, apiErr("INVALID_STATE", "只能在预约当天标记没来")
+	}
+	from := b.Status
+	b.Status, b.CancelReason = StatusCancelled, ReasonNoShow
+	a.refund(b, a.now().UTC())
+	if err := a.store.UpdateBooking(ctx, b, from); err != nil {
+		if errors.Is(err, ErrStale) {
+			return Booking{}, errStateMoved
+		}
+		return Booking{}, err
+	}
+	return a.out(b), nil
+}
+
+func (a *App) checkOwnerSlot(ctx context.Context, u *User, req SlotReq) error {
+	c, err := a.ownerCatalog(ctx, u)
+	if err != nil {
 		return err
 	}
-	if findArtist(req.ArtistID) == nil {
+	if c.artist(req.ArtistID) == nil {
 		return errNotFound
 	}
 	if !validDate(req.Date) || !isSlotTime(req.Time) {
@@ -714,7 +952,7 @@ func (a *App) checkOwnerSlot(u *User, req SlotReq) error {
 }
 
 func (a *App) BlockSlot(ctx context.Context, u *User, req SlotReq) error {
-	if err := a.checkOwnerSlot(u, req); err != nil {
+	if err := a.checkOwnerSlot(ctx, u, req); err != nil {
 		return err
 	}
 	taken, err := a.takenOn(ctx, req.Date)
@@ -728,7 +966,7 @@ func (a *App) BlockSlot(ctx context.Context, u *User, req SlotReq) error {
 }
 
 func (a *App) UnblockSlot(ctx context.Context, u *User, req SlotReq) error {
-	if err := a.checkOwnerSlot(u, req); err != nil {
+	if err := a.checkOwnerSlot(ctx, u, req); err != nil {
 		return err
 	}
 	return a.store.RemoveBlock(ctx, req.ArtistID, req.Date, req.Time)

@@ -56,6 +56,7 @@ src/
   api/
     types.ts       # 所有数据类型，前后端共用的契约
     contract.ts    # Api 接口定义，注释里写了对应的 REST 路径
+    catalog.ts     # 店主维护资料的字段规则（clean / validate），和 server/catalog.go 一致
     mock.ts        # 内存 mock 实现
     http.ts        # 真实后端实现（将来接 Go 服务）
     config.ts      # 真实后端的部署配置：云托管环境 ID、服务名、传输方式
@@ -64,7 +65,7 @@ src/
     index.ts       # 统一出口，页面只从这里 import
   utils/
     date.ts        # 日期格式化工具
-    money.ts       # 金额格式化（分 → 元）
+    money.ts       # 金额格式化（分 → 元）和店主输入的元 → 分
   styles/
     tokens.scss    # 设计变量
   components/      # 通用组件
@@ -73,8 +74,10 @@ src/
   test/            # 测试工具（helpers.ts）
 ```
 
-`server/` 是 Go 后端（只用标准库 + MySQL 驱动），业务规则在 `app.go`，要和 `mock.ts` 的行为一致；改了契约时两边一起改。
+`server/` 是 Go 后端（只用标准库 + MySQL 驱动），业务规则在 `app.go`（经营统计在 `stats.go`，课堂在 `courses.go`），要和 `mock.ts` 的行为一致；改了契约时两边一起改。
+课堂：课程免费，用来带客人到店。顾客讲师要在小程序里确认授权（说明版本 `TEACHER_AGREEMENT_VERSION`），结束合作后 TA 的课全部下架；客人从顾客讲师的课“预约同款”、到店完成的单，按下单时的比例从项目标价里分成，店主月底后线下打款再标记已付。课程视频传到云托管对象存储（要把读权限设成所有用户可读）。
 部署在云托管服务 `jingyu-api`，环境变量见 `server/main.go` 顶部注释。还没有商户号，`PAY_MODE=fake` 时由 `/v1/bookings/:id/fake-paid` 代替支付回调，只有店主和 `FAKE_PAY_OPENIDS` 里的测试人员能用。`PAY_MODE` 没有默认值，不设服务起不来，防止假支付被带上线。
+订阅消息由后端发（`server/notify.go`）：店主确认时发预约确认，每分钟的定时任务在开始前一天 18:00 后发到店提醒；客人付完定金、改期、取消时给店主发预约变动提醒（一次性订阅，额度记在 `owner_notify` 表，店主在排班页续）；模板 ID 和字段要和 `src/utils/subscribe.ts` 一致。
 表结构在 `server/migrations/`，启动时按文件名顺序执行没跑过的；已经执行过的文件不要改，改表结构加新文件。
 
 ## 数据规则（重要）
@@ -97,7 +100,28 @@ src/
 | pages/booking/success | 预约成功 | 预约成功 |
 | pages/me/index | 我的预约 | 我的预约 |
 | pages/me/skin | 肤质档案（普通页面，从“我的”进入） | 无（原型只有入口，按预约页表单样式做） |
+| pages/products/index | 化妆品清单（普通页面，从首页“店里用的化妆品”和信任条“用品品牌公开”进入，query 带 `category` 时预选类别） | 无（按作品页的筛选样式做） |
+| pages/course/index | 课堂：课程列表（从首页“课堂”和“我的”进入） | 无（按作品页的筛选样式做） |
+| pages/course/detail | 课程详情：顶部播放（`LessonPlayer`），目录、这一节用到的化妆品、本课清单，底部“预约同款”带 `courseId` | 无 |
+| pages/course/invite | 录课邀请：客人看授权说明（`utils/teaching.ts`）后确认，query 带 `code` | 无 |
+| pages/me/teaching | 我的课堂：顾客讲师看自己的课和每月分成，可结束合作 | 无 |
 | pages-owner/schedule/index | 店主排班（分包） | 排班 |
+| pages-owner/stats/index | 经营统计（分包，从“我的”进入，仅店主）：近 6 个月的预约数、定金收入、取消率、回头客，口径见 `types.ts` 的 `MonthStats` | 无 |
+| pages-owner/catalog/index | 门店资料（分包，从“我的”进入，仅店主） | 无（按肤质档案页的表单样式做） |
+| pages-owner/catalog/shop | 门店信息编辑 | 无 |
+| pages-owner/catalog/artists | 化妆师列表 | 无 |
+| pages-owner/catalog/artist | 添加 / 修改化妆师（query 带 `id` 时是修改） | 无 |
+| pages-owner/catalog/services | 项目列表（含已下架） | 无 |
+| pages-owner/catalog/service | 添加 / 修改项目，可下架（query 带 `id` 时是修改） | 无 |
+| pages-owner/catalog/works | 作品列表 | 无 |
+| pages-owner/catalog/work | 添加 / 修改作品（query 带 `id` 时是修改） | 无 |
+| pages-owner/catalog/products | 化妆品列表（按类别分组） | 无 |
+| pages-owner/catalog/product | 添加 / 修改化妆品（query 带 `id` 时是修改） | 无 |
+| pages-owner/catalog/courses | 课程列表（含已下架） | 无 |
+| pages-owner/catalog/course | 添加 / 修改课程：目录、传视频（`api/upload.ts`）、本课化妆品（query 带 `id` 时是修改） | 无 |
+| pages-owner/catalog/teachers | 顾客讲师列表 | 无 |
+| pages-owner/catalog/teacher | 邀请 / 修改讲师，发邀请、结束合作（query 带 `id` 时是修改） | 无 |
+| pages-owner/catalog/payouts | 讲师分成：按月汇总，月底后标记已付 | 无 |
 
 TabBar 包含首页、作品、预约、我的，使用 `pages.json` 的原生 tabBar。图标需要 PNG 格式（81×81），放在 `static/tab/`。
 

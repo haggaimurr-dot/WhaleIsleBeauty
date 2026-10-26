@@ -1,9 +1,10 @@
-/** 工具函数：日期、金额、分享、订阅消息 */
+/** 工具函数：日期、金额、分享、订阅消息、作品图尺寸 */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addMinutes, datesFromToday, dayLabel, formatClock, formatDateCN, upcomingDates } from '@/utils/date'
-import { formatPrice } from '@/utils/money'
-import { shareImage, sharePath } from '@/utils/share'
+import { addMinutes, datesFromToday, dayLabel, formatClock, formatCourseMinutes, formatDateCN, formatMonth, formatPlayTime, upcomingDates } from '@/utils/date'
+import { centsToYuanInput, formatPrice, parseYuan } from '@/utils/money'
+import { isSinglePage, shareImage, sharePath, shareQuery } from '@/utils/share'
 import { requestSubscribe, SUBSCRIBE_TEMPLATES } from '@/utils/subscribe'
+import { workImageHeight } from '@/utils/work'
 import { useMockClock } from '@/test/helpers'
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -27,6 +28,14 @@ describe('date', () => {
     expect(addMinutes('19:30', 45)).toBe('20:15')
     expect(formatClock(new Date(2026, 8, 30, 18, 5).toISOString())).toBe('18:05')
   })
+
+  it('课程的时长和月份', () => {
+    useMockClock()
+    expect([0, 65, 600, 3725].map(formatPlayTime)).toEqual(['0:00', '1:05', '10:00', '1:02:05'])
+    expect([20, 1200, 1250].map(formatCourseMinutes)).toEqual(['约 1 分钟', '约 20 分钟', '约 21 分钟'])
+    expect(formatMonth('2026-09')).toBe('9 月')
+    expect(formatMonth('2025-12')).toBe('2025 年 12 月')
+  })
 })
 
 describe('money', () => {
@@ -36,9 +45,38 @@ describe('money', () => {
     expect(formatPrice(12805)).toBe('¥128.05')
     expect(formatPrice(128000, { from: true })).toBe('¥1280 起')
   })
+
+  it('店主填的元转分：最多两位小数，认不出的返回 NaN', () => {
+    expect(parseYuan('298')).toBe(29800)
+    expect(parseYuan(' 128.5 ')).toBe(12850)
+    expect(parseYuan('0.1')).toBe(10)
+    expect(parseYuan('19.99')).toBe(1999) // 不能有浮点误差
+    for (const bad of ['', '¥298', '1.234', 'abc', '-5', '.5']) expect(parseYuan(bad)).toBeNaN()
+  })
+
+  it('分转回输入框里的元', () => {
+    expect(centsToYuanInput(29800)).toBe('298')
+    expect(centsToYuanInput(12850)).toBe('128.5')
+    expect(centsToYuanInput(1999)).toBe('19.99')
+  })
 })
 
 describe('share', () => {
+  it('朋友圈 query：不带路径，去掉空参数', () => {
+    expect(shareQuery({ category: 'bridal', workId: 'w3' })).toBe('category=bridal&workId=w3')
+    expect(shareQuery({ category: undefined })).toBe('')
+    expect(shareQuery({ id: 'a b' })).toBe('id=a%20b')
+  })
+
+  it('场景值 1154 是朋友圈单页模式；拿不到启动参数当普通模式', () => {
+    vi.stubGlobal('uni', { getLaunchOptionsSync: () => ({ scene: 1154 }) })
+    expect(isSinglePage()).toBe(true)
+    vi.stubGlobal('uni', { getLaunchOptionsSync: () => ({ scene: 1007 }) })
+    expect(isSinglePage()).toBe(false)
+    vi.stubGlobal('uni', {})
+    expect(isSinglePage()).toBe(false)
+  })
+
   it('路径跳过空参数并编码', () => {
     expect(sharePath('/pages/works/index', { category: 'bridal', workId: 'w3' })).toBe('/pages/works/index?category=bridal&workId=w3')
     expect(sharePath('/pages/works/index', { category: undefined, workId: '' })).toBe('/pages/works/index')
@@ -70,5 +108,13 @@ describe('subscribe', () => {
     } finally {
       Object.assign(SUBSCRIBE_TEMPLATES, saved)
     }
+  })
+})
+
+describe('work', () => {
+  it('瀑布流图片高度只有固定几档，最高 440rpx', () => {
+    expect([1, 1.25, 1.33, 1.5].map(workImageHeight)).toEqual([320, 360, 400, 440])
+    expect(workImageHeight(0.5)).toBe(320)
+    expect(workImageHeight(2)).toBe(440)
   })
 })

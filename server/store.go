@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,28 +30,43 @@ type User struct {
 
 // BookingRow 是存储里的预约。时间都用 UTC 存
 type BookingRow struct {
-	ID           string
-	UserID       string
-	ServiceID    string
-	ServiceName  string
-	ArtistID     string
-	ArtistName   string
-	Date         string
-	Time         string
-	StartAt      time.Time
-	EndAt        time.Time
-	DurationMin  int
-	Price        int
-	Deposit      int
-	Status       string
-	Occasion     string
-	SkinType     string
-	Note         string
-	CreatedAt    time.Time
-	PayDeadline  *time.Time
-	PaidAt       *time.Time
-	RefundedAt   *time.Time
-	CancelReason string
+	ID          string
+	UserID      string
+	ServiceID   string
+	ServiceName string
+	ArtistID    string
+	ArtistName  string
+	Date        string
+	Time        string
+	StartAt     time.Time
+	EndAt       time.Time
+	DurationMin int
+	Price       int
+	Deposit     int
+	Status      string
+	Occasion    string
+	SkinType    string
+	Note        string
+	CreatedAt   time.Time
+	PayDeadline *time.Time
+	PaidAt      *time.Time
+	// RefundRequestedAt 发起退款的时间；RefundedAt 退款到账的时间（假支付时是预计到账时间，可能还在将来）
+	RefundRequestedAt *time.Time
+	RefundedAt        *time.Time
+	CancelReason      string
+	// 从哪门课来的（下单时的课名）；TeacherID、ShareRate 只在讲师是顾客讲师、能分成时才有
+	CourseID    string
+	CourseTitle string
+	TeacherID   string
+	ShareRate   int
+}
+
+// ProgressRow 一位客人在一门课上的观看进度
+type ProgressRow struct {
+	LessonID    string
+	PositionSec int
+	Finished    []string
+	UpdatedAt   time.Time
 }
 
 func slotKey(artistID, date, t string) string { return artistID + "|" + date + "|" + t }
@@ -71,13 +87,58 @@ type Store interface {
 	UpdateBooking(ctx context.Context, b *BookingRow, from string) error
 	BookingsByUser(ctx context.Context, userID string, statuses []string) ([]*BookingRow, error)
 	ActiveBookingsOn(ctx context.Context, date string) ([]*BookingRow, error)
+	// ScheduledBookingsOn 排班要显示的预约：进行中的、已完成的、标记了没来的
+	ScheduledBookingsOn(ctx context.Context, date string) ([]*BookingRow, error)
 	// DueBookings 返回需要自动流转的预约：付款超时、到点没确认、已确认且已结束
 	DueBookings(ctx context.Context, now time.Time) ([]*BookingRow, error)
+	// PaidBookingsBetween 到店日期在 [from, to) 里、付过定金的预约（含付过之后取消的），经营统计用
+	PaidBookingsBetween(ctx context.Context, from, to string) ([]*BookingRow, error)
+	// FirstVisits 这些客人第一次到店完成的日期，没完成过的不在结果里
+	FirstVisits(ctx context.Context, userIDs []string) (map[string]string, error)
 
 	// BlocksOn 返回这一天设了休息的时段，key 是 artistID|time
 	BlocksOn(ctx context.Context, date string) (map[string]bool, error)
 	AddBlock(ctx context.Context, artistID, date, t string) error
 	RemoveBlock(ctx context.Context, artistID, date, t string) error
+
+	// ClaimNotice 占一条订阅消息的发送记录；已经有了返回 false（发过或者别的实例正在发）
+	ClaimNotice(ctx context.Context, key, bookingID, kind string, at time.Time) (bool, error)
+	// FinishNotice 记下发送结果：sent，或者微信返回的错误
+	FinishNotice(ctx context.Context, key, result string) error
+	// ReleaseNotice 删掉占位，下次可以重发
+	ReleaseNotice(ctx context.Context, key string) error
+
+	// OwnerNotifyQuota 店主还能收几条提醒，没记录过是 0
+	OwnerNotifyQuota(ctx context.Context, openid string) (int, error)
+	// AddOwnerNotifyQuota 加 n 条（n 可以是负数，结果不会小于 0），返回加完的额度
+	AddOwnerNotifyQuota(ctx context.Context, openid string, n int) (int, error)
+	// TakeOwnerNotifyQuota 额度大于 0 时减一并返回 true；多个实例同时扣也不会扣成负数
+	TakeOwnerNotifyQuota(ctx context.Context, openid string) (bool, error)
+
+	// CatalogItems 全部基础资料（catalog.go 负责排序和解析）
+	CatalogItems(ctx context.Context) ([]CatalogItem, error)
+	// PutCatalogItem 新增或整份替换；已有的保留原来的 Sort
+	PutCatalogItem(ctx context.Context, it CatalogItem) error
+	// DeleteCatalogItem 不存在返回 ErrNotFound
+	DeleteCatalogItem(ctx context.Context, kind, id string) error
+	// ActiveBookingExists 这位化妆师（或这个项目）还有没有进行中的预约。两个参数只传一个，另一个为空
+	ActiveBookingExists(ctx context.Context, artistID, serviceID string) (bool, error)
+
+	// ShareBookings 到店日期在 [from, to) 里、已经完成、记了讲师分成的预约
+	ShareBookings(ctx context.Context, from, to string) ([]*BookingRow, error)
+	// CourseProgress 没看过返回 nil, nil
+	CourseProgress(ctx context.Context, userID, courseID string) (*ProgressRow, error)
+	SaveCourseProgress(ctx context.Context, userID, courseID string, p ProgressRow) error
+	// TrimCourseProgress 改课后：最近在看的小节不在 keep 里的删掉，看完的只留 keep 里的；keep 为 nil 表示整门课的都删
+	TrimCourseProgress(ctx context.Context, courseID string, keep map[string]bool) error
+	// PaidPayouts 标记过已付的分成
+	PaidPayouts(ctx context.Context) ([]Payout, error)
+	// InsertPaidPayout 已经标记过返回 ErrStale
+	InsertPaidPayout(ctx context.Context, p Payout, paidAt time.Time) error
+}
+
+func onSchedule(b *BookingRow) bool {
+	return isActive(b.Status) || b.Status == StatusCompleted || b.CancelReason == ReasonNoShow
 }
 
 func isDue(b *BookingRow, now time.Time) bool {
@@ -98,11 +159,24 @@ type memStore struct {
 	mu       sync.Mutex
 	users    map[string]*User // by id
 	bookings map[string]*BookingRow
-	blocks   map[string]bool // slotKey
+	blocks   map[string]bool        // slotKey
+	notices  map[string]string      // noticeKey → 结果，"" 表示正在发
+	quota    map[string]int         // 店主 openid → 提醒额度
+	catalog  map[string]CatalogItem // kind|id
+	progress map[string]ProgressRow // userID|courseID
+	payouts  map[string]Payout      // teacherID|month
 }
 
 func newMemStore() *memStore {
-	return &memStore{users: map[string]*User{}, bookings: map[string]*BookingRow{}, blocks: map[string]bool{}}
+	s := &memStore{
+		users: map[string]*User{}, bookings: map[string]*BookingRow{}, blocks: map[string]bool{},
+		notices: map[string]string{}, catalog: map[string]CatalogItem{}, quota: map[string]int{},
+		progress: map[string]ProgressRow{}, payouts: map[string]Payout{},
+	}
+	for _, it := range seedCatalogItems() {
+		s.catalog[it.Kind+"|"+it.ID] = it
+	}
+	return s
 }
 
 func cloneBooking(b *BookingRow) *BookingRow { c := *b; return &c }
@@ -237,21 +311,45 @@ func (s *memStore) ActiveBookingsOn(_ context.Context, date string) ([]*BookingR
 	return s.filter(func(b *BookingRow) bool { return b.Date == date && isActive(b.Status) }), nil
 }
 
+func (s *memStore) ScheduledBookingsOn(_ context.Context, date string) ([]*BookingRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.filter(func(b *BookingRow) bool { return b.Date == date && onSchedule(b) }), nil
+}
+
 func (s *memStore) DueBookings(_ context.Context, now time.Time) ([]*BookingRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.filter(func(b *BookingRow) bool { return isDue(b, now) }), nil
 }
 
+func (s *memStore) PaidBookingsBetween(_ context.Context, from, to string) ([]*BookingRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.filter(func(b *BookingRow) bool { return b.PaidAt != nil && b.Date >= from && b.Date < to }), nil
+}
+
+func (s *memStore) FirstVisits(_ context.Context, userIDs []string) (map[string]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	want := set(userIDs...)
+	out := map[string]string{}
+	for _, b := range s.bookings {
+		if b.Status == StatusCompleted && want[b.UserID] && (out[b.UserID] == "" || b.Date < out[b.UserID]) {
+			out[b.UserID] = b.Date
+		}
+	}
+	return out, nil
+}
+
 func (s *memStore) BlocksOn(_ context.Context, date string) (map[string]bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := map[string]bool{}
-	for _, a := range artists {
-		for _, t := range slotTimes {
-			if s.blocks[slotKey(a.ID, date, t)] {
-				out[a.ID+"|"+t] = true
-			}
+	for k := range s.blocks {
+		// slotKey 是 artistID|date|time
+		if parts := strings.Split(k, "|"); len(parts) == 3 && parts[1] == date {
+			out[parts[0]+"|"+parts[2]] = true
 		}
 	}
 	return out, nil
@@ -268,5 +366,171 @@ func (s *memStore) RemoveBlock(_ context.Context, artistID, date, t string) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.blocks, slotKey(artistID, date, t))
+	return nil
+}
+
+func (s *memStore) ClaimNotice(_ context.Context, key, _, _ string, _ time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.notices[key]; ok {
+		return false, nil
+	}
+	s.notices[key] = ""
+	return true, nil
+}
+
+func (s *memStore) FinishNotice(_ context.Context, key, result string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notices[key] = result
+	return nil
+}
+
+func (s *memStore) ReleaseNotice(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.notices, key)
+	return nil
+}
+
+func (s *memStore) OwnerNotifyQuota(_ context.Context, openid string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.quota[openid], nil
+}
+
+func (s *memStore) AddOwnerNotifyQuota(_ context.Context, openid string, n int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.quota[openid] = max(s.quota[openid]+n, 0)
+	return s.quota[openid], nil
+}
+
+func (s *memStore) TakeOwnerNotifyQuota(_ context.Context, openid string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.quota[openid] <= 0 {
+		return false, nil
+	}
+	s.quota[openid]--
+	return true, nil
+}
+
+func (s *memStore) CatalogItems(_ context.Context) ([]CatalogItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]CatalogItem, 0, len(s.catalog))
+	for _, it := range s.catalog {
+		out = append(out, it)
+	}
+	return out, nil
+}
+
+func (s *memStore) PutCatalogItem(_ context.Context, it CatalogItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := it.Kind + "|" + it.ID
+	if old, ok := s.catalog[key]; ok {
+		it.Sort = old.Sort
+	}
+	s.catalog[key] = it
+	return nil
+}
+
+func (s *memStore) DeleteCatalogItem(_ context.Context, kind, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := kind + "|" + id
+	if _, ok := s.catalog[key]; !ok {
+		return ErrNotFound
+	}
+	delete(s.catalog, key)
+	return nil
+}
+
+func (s *memStore) ActiveBookingExists(_ context.Context, artistID, serviceID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, b := range s.bookings {
+		if isActive(b.Status) && (artistID != "" && b.ArtistID == artistID || serviceID != "" && b.ServiceID == serviceID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *memStore) ShareBookings(_ context.Context, from, to string) ([]*BookingRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.filter(func(b *BookingRow) bool {
+		return b.Status == StatusCompleted && b.TeacherID != "" && b.Date >= from && b.Date < to
+	}), nil
+}
+
+func (s *memStore) CourseProgress(_ context.Context, userID, courseID string) (*ProgressRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.progress[userID+"|"+courseID]
+	if !ok {
+		return nil, nil
+	}
+	p.Finished = append([]string{}, p.Finished...)
+	return &p, nil
+}
+
+func (s *memStore) SaveCourseProgress(_ context.Context, userID, courseID string, p ProgressRow) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p.Finished = append([]string{}, p.Finished...)
+	s.progress[userID+"|"+courseID] = p
+	return nil
+}
+
+func (s *memStore) TrimCourseProgress(_ context.Context, courseID string, keep map[string]bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, p := range s.progress {
+		if !strings.HasSuffix(k, "|"+courseID) {
+			continue
+		}
+		if keep == nil || !keep[p.LessonID] {
+			delete(s.progress, k)
+			continue
+		}
+		p.Finished = keepOnly(p.Finished, keep)
+		s.progress[k] = p
+	}
+	return nil
+}
+
+// keepOnly 只留 keep 里有的，结果不为 nil
+func keepOnly(list []string, keep map[string]bool) []string {
+	out := []string{}
+	for _, v := range list {
+		if keep[v] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (s *memStore) PaidPayouts(_ context.Context) ([]Payout, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Payout, 0, len(s.payouts))
+	for _, p := range s.payouts {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (s *memStore) InsertPaidPayout(_ context.Context, p Payout, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := p.TeacherID + "|" + p.Month
+	if _, ok := s.payouts[key]; ok {
+		return ErrStale
+	}
+	s.payouts[key] = p
 	return nil
 }

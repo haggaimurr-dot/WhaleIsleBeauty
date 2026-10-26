@@ -6,6 +6,7 @@
  * 部署配置（环境 ID、服务名、传输方式）在 config.ts。换成自己的域名时把 TRANSPORT 改成 'https'，登录会自动走 code 换 token。
  * 云托管的 callContainer 需要基础库 2.23.0 以上，在小程序后台把最低基础库设到这个版本。
  */
+import { isSinglePage } from '@/utils/share'
 import { API_PREFIX, BASE_URL, CLOUD_ENV, CLOUD_SERVICE, TRANSPORT } from './config'
 import type { Api } from './contract'
 import { ApiError, type Booking, type ErrorCode, type ID, type Me, type WxPayParams } from './types'
@@ -113,8 +114,15 @@ function doLogin(): Promise<Me> {
  * 需要登录的请求：
  * - 这次启动还没登录过（或启动时的登录还没回来）就先等登录
  * - 返回 401 时重新登录，再重试一次原来的请求；还是 401 就把 UNAUTHORIZED 抛给页面
+ * - 朋友圈单页模式不登录
  */
 async function request<T>(method: Method, path: string, data?: unknown): Promise<T> {
+  // 朋友圈单页模式没有登录态：直接发，后端只开放了公开资料，其余接口会报 UNAUTHORIZED
+  if (isSinglePage()) {
+    const res = await send<T>(method, path, data)
+    if (res.ok) return res.data
+    throw res.error
+  }
   if (loggingIn) await loggingIn.catch(() => {})
   if (!loginGen) await doLogin()
 
@@ -154,6 +162,7 @@ export const httpApi: Api = {
   listWorks: (category) => request('GET', '/works' + qs({ category })),
   listBookableDates: () => request('GET', '/dates'),
   getShop: () => request('GET', '/shop'),
+  listProducts: (category) => request('GET', '/products' + qs({ category })),
 
   listSlots: (artistId, date, serviceId, excludeBookingId) =>
     request('GET', '/slots' + qs({ artistId, date, serviceId, excludeBookingId })),
@@ -167,8 +176,53 @@ export const httpApi: Api = {
   listScheduleDates: () => request('GET', '/owner/dates'),
   getDaySchedule: (date) => request('GET', '/owner/schedule' + qs({ date })),
   confirmBooking: (id) => request('POST', `/owner/bookings/${id}/confirm`),
+  ownerCancelBooking: (id) => request('POST', `/owner/bookings/${id}/cancel`),
+  ownerRescheduleBooking: (id, req) => request('POST', `/owner/bookings/${id}/reschedule`, req),
+  markNoShow: (id) => request('POST', `/owner/bookings/${id}/no-show`),
   blockSlot: (artistId, date, time) => request('PUT', '/owner/blocks', { artistId, date, time }),
   unblockSlot: (artistId, date, time) => request('DELETE', '/owner/blocks', { artistId, date, time }),
+  getOwnerNotify: () => request('GET', '/owner/notify'),
+  addOwnerNotify: (count) => request('POST', '/owner/notify', { count }),
+  listMonthStats: () => request('GET', '/owner/stats'),
+
+  updateShop: (shop) => request('PUT', '/owner/shop', shop),
+  createArtist: (req) => request('POST', '/owner/artists', req),
+  updateArtist: (id, req) => request('PUT', `/owner/artists/${id}`, req),
+  deleteArtist: (id) => request('DELETE', `/owner/artists/${id}`),
+  listOwnerServices: () => request('GET', '/owner/services'),
+  createService: (req) => request('POST', '/owner/services', req),
+  updateService: (id, req) => request('PUT', `/owner/services/${id}`, req),
+  deleteService: (id) => request('DELETE', `/owner/services/${id}`),
+  listOwnerWorks: () => request('GET', '/owner/works'),
+  createWork: (req) => request('POST', '/owner/works', req),
+  updateWork: (id, req) => request('PUT', `/owner/works/${id}`, req),
+  deleteWork: (id) => request('DELETE', `/owner/works/${id}`),
+  createProduct: (req) => request('POST', '/owner/products', req),
+  updateProduct: (id, req) => request('PUT', `/owner/products/${id}`, req),
+  deleteProduct: (id) => request('DELETE', `/owner/products/${id}`),
+
+  listCourses: (category) => request('GET', '/courses' + qs({ category })),
+  getCourse: (id) => request('GET', `/courses/${id}`),
+  saveCourseProgress: (courseId, req) => request('PUT', `/courses/${courseId}/progress`, req),
+
+  getTeacherInvite: (code) => request('GET', `/teacher-invites/${encodeURIComponent(code)}`),
+  acceptTeacherInvite: (code, agreementVersion) =>
+    request('POST', `/teacher-invites/${encodeURIComponent(code)}/accept`, { agreementVersion }),
+  getMyTeaching: () => request('GET', '/me/teaching'),
+  quitTeaching: () => request('POST', '/me/teaching/quit'),
+
+  listOwnerCourses: () => request('GET', '/owner/courses'),
+  getOwnerCourse: (id) => request('GET', `/owner/courses/${id}`),
+  createCourse: (req) => request('POST', '/owner/courses', req),
+  updateCourse: (id, req) => request('PUT', `/owner/courses/${id}`, req),
+  deleteCourse: (id) => request('DELETE', `/owner/courses/${id}`),
+  listTeachers: () => request('GET', '/owner/teachers'),
+  createTeacher: (req) => request('POST', '/owner/teachers', req),
+  updateTeacher: (id, req) => request('PUT', `/owner/teachers/${id}`, req),
+  endTeacher: (id) => request('POST', `/owner/teachers/${id}/end`),
+  deleteTeacher: (id) => request('DELETE', `/owner/teachers/${id}`),
+  listPayouts: () => request('GET', '/owner/payouts'),
+  markPayoutPaid: (teacherId, month) => request('POST', `/owner/payouts/${teacherId}/${month}/paid`),
 }
 
 /**
