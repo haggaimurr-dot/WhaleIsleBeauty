@@ -2,6 +2,10 @@
   "name": "uni-preset-vue",
   "version": "0.0.0",
   "scripts": {
+    "dev:pc": "vite --config pc/vite.config.ts",
+    "dev:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File pc/dev-backend.ps1",
+    "build:pc": "vite build --config pc/vite.config.ts",
+    "type-check:pc": "vue-tsc --noEmit -p pc/tsconfig.json",
     "dev:custom": "uni -p",
     "dev:h5": "uni",
     "dev:h5:ssr": "uni --ssr",
